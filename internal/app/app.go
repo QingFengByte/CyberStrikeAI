@@ -298,6 +298,19 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	skillsManager := skills.NewManager(skillsDir, log.Logger)
 	log.Logger.Info("Skills管理器已初始化", zap.String("skillsDir", skillsDir))
 
+	agentsDir := cfg.AgentsDir
+	if agentsDir == "" {
+		agentsDir = "agents"
+	}
+	if !filepath.IsAbs(agentsDir) {
+		agentsDir = filepath.Join(configDir, agentsDir)
+	}
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		log.Logger.Warn("创建 agents 目录失败", zap.String("path", agentsDir), zap.Error(err))
+	}
+	markdownAgentsHandler := handler.NewMarkdownAgentsHandler(agentsDir)
+	log.Logger.Info("多代理 Markdown 子 Agent 目录", zap.String("agentsDir", agentsDir))
+
 	// 注册Skills工具到MCP服务器（让AI可以按需调用，带数据库存储支持统计）
 	// 创建一个适配器，将database.DB适配为SkillStatsStorage接口
 	var skillStatsStorage skills.SkillStatsStorage
@@ -309,6 +322,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 	// 创建处理器
 	agentHandler := handler.NewAgentHandler(agent, db, cfg, log.Logger)
 	agentHandler.SetSkillsManager(skillsManager) // 设置Skills管理器
+	agentHandler.SetAgentsMarkdownDir(agentsDir)
 	// 如果知识库已启用，设置知识库管理器到AgentHandler以便记录检索日志
 	if knowledgeManager != nil {
 		agentHandler.SetKnowledgeManager(knowledgeManager)
@@ -443,6 +457,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		chatUploadsHandler,
 		roleHandler,
 		skillsHandler,
+		markdownAgentsHandler,
 		fofaHandler,
 		terminalHandler,
 		mcpServer,
@@ -572,6 +587,7 @@ func setupRoutes(
 	chatUploadsHandler *handler.ChatUploadsHandler,
 	roleHandler *handler.RoleHandler,
 	skillsHandler *handler.SkillsHandler,
+	markdownAgentsHandler *handler.MarkdownAgentsHandler,
 	fofaHandler *handler.FofaHandler,
 	terminalHandler *handler.TerminalHandler,
 	mcpServer *mcp.Server,
@@ -610,6 +626,16 @@ func setupRoutes(
 		protected.POST("/agent-loop/cancel", agentHandler.CancelAgentLoop)
 		protected.GET("/agent-loop/tasks", agentHandler.ListAgentTasks)
 		protected.GET("/agent-loop/tasks/completed", agentHandler.ListCompletedTasks)
+
+		// Eino DeepAgent 多代理（与单 Agent 并存，需 config.multi_agent.enabled）
+		// 多代理路由常注册；是否可用由运行时 h.config.MultiAgent.Enabled 决定（应用配置后无需重启）
+		protected.POST("/multi-agent", agentHandler.MultiAgentLoop)
+		protected.POST("/multi-agent/stream", agentHandler.MultiAgentLoopStream)
+		protected.GET("/multi-agent/markdown-agents", markdownAgentsHandler.ListMarkdownAgents)
+		protected.GET("/multi-agent/markdown-agents/:filename", markdownAgentsHandler.GetMarkdownAgent)
+		protected.POST("/multi-agent/markdown-agents", markdownAgentsHandler.CreateMarkdownAgent)
+		protected.PUT("/multi-agent/markdown-agents/:filename", markdownAgentsHandler.UpdateMarkdownAgent)
+		protected.DELETE("/multi-agent/markdown-agents/:filename", markdownAgentsHandler.DeleteMarkdownAgent)
 
 		// 信息收集 - FOFA 查询（后端代理）
 		protected.POST("/fofa/search", fofaHandler.Search)
@@ -1147,7 +1173,7 @@ func registerWebshellTools(mcpServer *mcp.Server, db *database.DB, webshellHandl
 			"type": "object",
 			"properties": map[string]interface{}{
 				"connection_id": map[string]interface{}{"type": "string", "description": "WebShell 连接 ID"},
-				"path": map[string]interface{}{"type": "string", "description": "目录路径，默认 ."},
+				"path":          map[string]interface{}{"type": "string", "description": "目录路径，默认 ."},
 			},
 			"required": []string{"connection_id"},
 		},
@@ -1179,7 +1205,7 @@ func registerWebshellTools(mcpServer *mcp.Server, db *database.DB, webshellHandl
 			"type": "object",
 			"properties": map[string]interface{}{
 				"connection_id": map[string]interface{}{"type": "string", "description": "WebShell 连接 ID"},
-				"path": map[string]interface{}{"type": "string", "description": "文件路径"},
+				"path":          map[string]interface{}{"type": "string", "description": "文件路径"},
 			},
 			"required": []string{"connection_id", "path"},
 		},
@@ -1211,8 +1237,8 @@ func registerWebshellTools(mcpServer *mcp.Server, db *database.DB, webshellHandl
 			"type": "object",
 			"properties": map[string]interface{}{
 				"connection_id": map[string]interface{}{"type": "string", "description": "WebShell 连接 ID"},
-				"path": map[string]interface{}{"type": "string", "description": "文件路径"},
-				"content": map[string]interface{}{"type": "string", "description": "要写入的内容"},
+				"path":          map[string]interface{}{"type": "string", "description": "文件路径"},
+				"content":       map[string]interface{}{"type": "string", "description": "要写入的内容"},
 			},
 			"required": []string{"connection_id", "path", "content"},
 		},

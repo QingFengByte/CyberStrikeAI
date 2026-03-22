@@ -92,6 +92,7 @@ CyberStrikeAI is an **AI-native security testing platform** built in Go. It inte
 - 🛡️ Vulnerability management with CRUD operations, severity tracking, status workflow, and statistics
 - 📋 Batch task management: create task queues, add multiple tasks, and execute them sequentially
 - 🎭 Role-based testing: predefined security testing roles (Penetration Testing, CTF, Web App Scanning, etc.) with custom prompts and tool restrictions
+- 🧩 **Multi-agent mode (Eino DeepAgent)**: optional orchestration where a coordinator delegates work to Markdown-defined sub-agents via the `task` tool; main agent in `agents/orchestrator.md` (or `kind: orchestrator`), sub-agents under `agents/*.md`; chat mode switch when `multi_agent.enabled` is true (see [Multi-agent doc](docs/MULTI_AGENT_EINO.md))
 - 🎯 Skills system: 20+ predefined security testing skills (SQL injection, XSS, API security, etc.) that can be attached to roles or called on-demand by AI agents
 - 📱 **Chatbot**: DingTalk and Lark (Feishu) long-lived connections so you can talk to CyberStrikeAI from mobile (see [Robot / Chatbot guide](docs/robot_en.md) for setup and commands)
  - 🐚 **WebShell management**: Add and manage WebShell connections (e.g. IceSword/AntSword compatible), use a virtual terminal for command execution, a built-in file manager for file operations, and an AI assistant tab that orchestrates tests and keeps per-connection conversation history; supports PHP, ASP, ASPX, JSP and custom shell types with configurable request method and command parameter.
@@ -195,6 +196,7 @@ Requirements / tips:
 
 ### Core Workflows
 - **Conversation testing** – Natural-language prompts trigger toolchains with streaming SSE output.
+- **Single vs multi-agent** – With `multi_agent.enabled: true`, the chat UI can switch between **single** (classic ReAct loop) and **multi** (Eino DeepAgent + `task` sub-agents). Multi mode uses `/api/multi-agent/stream`; tools are bridged from the same MCP stack as single-agent.
 - **Role-based testing** – Select from predefined security testing roles (Penetration Testing, CTF, Web App Scanning, API Security Testing, etc.) to customize AI behavior and tool availability. Each role applies custom system prompts and can restrict available tools for focused testing scenarios.
 - **Tool monitor** – Inspect running jobs, execution logs, and large-result attachments.
 - **History & audit** – Every conversation and tool invocation is stored in SQLite with replay.
@@ -237,6 +239,15 @@ Requirements / tips:
    enabled: true
    ```
 2. Restart the server or reload configuration; the role appears in the role selector dropdown.
+
+### Multi-Agent Mode (Eino DeepAgent)
+- **What it is** – An optional second execution path based on CloudWeGo **Eino** `adk/prebuilt/deep`: a **coordinator** (main agent) calls a **`task`** tool to run ephemeral **sub-agents**, each with its own model loop and tool set derived from the current role.
+- **Markdown agents** – Under `agents_dir` (default `agents/`, relative to `config.yaml`), define:
+  - **Orchestrator**: file name `orchestrator.md` *or* any `.md` with front matter `kind: orchestrator` (only **one** per directory). Sets Deep agent name/id, description, and optional full system prompt (body); if the body is empty, `multi_agent.orchestrator_instruction` and then Eino defaults apply.
+  - **Sub-agents**: other `*.md` files (YAML front matter + body as instruction). They are **not** used as `task` targets if classified as orchestrator.
+- **Management** – Web UI: **Agents → Agent management** for CRUD on Markdown agents; API prefix `/api/multi-agent/markdown-agents`.
+- **Config** – `multi_agent` block in `config.yaml`: `enabled`, `default_mode` (`single` | `multi`), `robot_use_multi_agent`, `batch_use_multi_agent`, `max_iteration`, `orchestrator_instruction`, optional YAML `sub_agents` merged with disk (same `id` → Markdown wins).
+- **Details** – Streaming events, robots, batch queue, and troubleshooting: **[docs/MULTI_AGENT_EINO.md](docs/MULTI_AGENT_EINO.md)**.
 
 ### Skills System
 - **Predefined skills** – System includes 20+ predefined security testing skills (SQL injection, XSS, API security, cloud security, container security, etc.) in the `skills/` directory.
@@ -428,6 +439,7 @@ A test SSE MCP server is available at `cmd/test-sse-mcp-server/` for validation 
 
 ### Automation Hooks
 - **REST APIs** – everything the UI uses (auth, conversations, tool runs, monitor, vulnerabilities, roles) is available over JSON.
+- **Multi-agent APIs** – `POST /api/multi-agent/stream` (SSE, when enabled), `POST /api/multi-agent` (non-streaming), Markdown agents under `/api/multi-agent/markdown-agents` (list/get/create/update/delete).
 - **Role APIs** – manage security testing roles via `/api/roles` endpoints: `GET /api/roles` (list all roles), `GET /api/roles/:name` (get role), `POST /api/roles` (create role), `PUT /api/roles/:name` (update role), `DELETE /api/roles/:name` (delete role). Roles are stored as YAML files in the `roles/` directory and support hot-reload.
 - **Vulnerability APIs** – manage vulnerabilities via `/api/vulnerabilities` endpoints: `GET /api/vulnerabilities` (list with filters), `POST /api/vulnerabilities` (create), `GET /api/vulnerabilities/:id` (get), `PUT /api/vulnerabilities/:id` (update), `DELETE /api/vulnerabilities/:id` (delete), `GET /api/vulnerabilities/stats` (statistics).
 - **Batch Task APIs** – manage batch task queues via `/api/batch-tasks` endpoints: `POST /api/batch-tasks` (create queue), `GET /api/batch-tasks` (list queues), `GET /api/batch-tasks/:queueId` (get queue), `POST /api/batch-tasks/:queueId/start` (start execution), `POST /api/batch-tasks/:queueId/cancel` (cancel), `DELETE /api/batch-tasks/:queueId` (delete), `POST /api/batch-tasks/:queueId/tasks` (add task), `PUT /api/batch-tasks/:queueId/tasks/:taskId` (update task), `DELETE /api/batch-tasks/:queueId/tasks/:taskId` (delete task). Tasks execute sequentially, each creating a separate conversation with full status tracking.
@@ -476,6 +488,13 @@ knowledge:
     hybrid_weight: 0.7  # Weight for vector search (1.0 = pure vector, 0.0 = pure keyword)
 roles_dir: "roles"  # Role configuration directory (relative to config file)
 skills_dir: "skills"  # Skills directory (relative to config file)
+agents_dir: "agents"  # Multi-agent Markdown definitions (orchestrator + sub-agents)
+multi_agent:
+  enabled: false
+  default_mode: "single"   # single | multi (UI default when multi-agent is enabled)
+  robot_use_multi_agent: false
+  batch_use_multi_agent: false
+  orchestrator_instruction: ""  # Optional; used when orchestrator.md body is empty
 ```
 
 ### Tool Definition Example (`tools/nmap.yaml`)
@@ -520,6 +539,7 @@ enabled: true
 
 ## Related documentation
 
+- [Multi-agent mode (Eino)](docs/MULTI_AGENT_EINO.md): DeepAgent orchestration, `agents/*.md`, APIs, and chat/stream behavior.
 - [Robot / Chatbot guide (DingTalk & Lark)](docs/robot_en.md): Full setup, commands, and troubleshooting for using CyberStrikeAI from DingTalk or Lark on your phone. **Follow this doc to avoid common pitfalls.**
 
 ## Project Layout
@@ -532,7 +552,8 @@ CyberStrikeAI/
 ├── tools/               # YAML tool recipes (100+ examples provided)
 ├── roles/               # Role configurations (12+ predefined security testing roles)
 ├── skills/              # Skills directory (20+ predefined security testing skills)
-├── docs/                # Documentation (e.g. robot/chbot guide)
+├── agents/              # Multi-agent Markdown (orchestrator.md + sub-agent *.md)
+├── docs/                # Documentation (e.g. robot/chatbot guide, MULTI_AGENT_EINO.md)
 ├── images/              # Docs screenshots & diagrams
 ├── config.yaml          # Runtime configuration
 ├── run.sh               # Convenience launcher

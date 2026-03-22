@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"cyberstrike-ai/internal/agents"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/knowledge"
 	"cyberstrike-ai/internal/mcp"
@@ -168,13 +169,14 @@ func (h *ConfigHandler) SetRobotRestarter(restarter RobotRestarter) {
 
 // GetConfigResponse 获取配置响应
 type GetConfigResponse struct {
-	OpenAI    config.OpenAIConfig    `json:"openai"`
-	FOFA      config.FofaConfig      `json:"fofa"`
-	MCP       config.MCPConfig       `json:"mcp"`
-	Tools     []ToolConfigInfo       `json:"tools"`
-	Agent     config.AgentConfig     `json:"agent"`
-	Knowledge config.KnowledgeConfig `json:"knowledge"`
-	Robots    config.RobotsConfig     `json:"robots,omitempty"`
+	OpenAI     config.OpenAIConfig     `json:"openai"`
+	FOFA       config.FofaConfig       `json:"fofa"`
+	MCP        config.MCPConfig        `json:"mcp"`
+	Tools      []ToolConfigInfo        `json:"tools"`
+	Agent      config.AgentConfig      `json:"agent"`
+	Knowledge  config.KnowledgeConfig  `json:"knowledge"`
+	Robots     config.RobotsConfig     `json:"robots,omitempty"`
+	MultiAgent config.MultiAgentPublic `json:"multi_agent,omitempty"`
 }
 
 // ToolConfigInfo 工具配置信息
@@ -240,14 +242,37 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 		}
 	}
 
+	subAgentCount := len(h.config.MultiAgent.SubAgents)
+	agentsDir := strings.TrimSpace(h.config.AgentsDir)
+	if agentsDir == "" {
+		agentsDir = "agents"
+	}
+	if !filepath.IsAbs(agentsDir) {
+		agentsDir = filepath.Join(filepath.Dir(h.configPath), agentsDir)
+	}
+	if load, err := agents.LoadMarkdownAgentsDir(agentsDir); err == nil {
+		subAgentCount = len(agents.MergeYAMLAndMarkdown(h.config.MultiAgent.SubAgents, load.SubAgents))
+	}
+	multiPub := config.MultiAgentPublic{
+		Enabled:            h.config.MultiAgent.Enabled,
+		DefaultMode:        h.config.MultiAgent.DefaultMode,
+		RobotUseMultiAgent: h.config.MultiAgent.RobotUseMultiAgent,
+		BatchUseMultiAgent: h.config.MultiAgent.BatchUseMultiAgent,
+		SubAgentCount:      subAgentCount,
+	}
+	if strings.TrimSpace(multiPub.DefaultMode) == "" {
+		multiPub.DefaultMode = "single"
+	}
+
 	c.JSON(http.StatusOK, GetConfigResponse{
-		OpenAI:    h.config.OpenAI,
-		FOFA:      h.config.FOFA,
-		MCP:       h.config.MCP,
-		Tools:     tools,
-		Agent:     h.config.Agent,
-		Knowledge: h.config.Knowledge,
-		Robots:    h.config.Robots,
+		OpenAI:     h.config.OpenAI,
+		FOFA:       h.config.FOFA,
+		MCP:        h.config.MCP,
+		Tools:      tools,
+		Agent:      h.config.Agent,
+		Knowledge:  h.config.Knowledge,
+		Robots:     h.config.Robots,
+		MultiAgent: multiPub,
 	})
 }
 
@@ -499,13 +524,14 @@ func (h *ConfigHandler) GetTools(c *gin.Context) {
 
 // UpdateConfigRequest 更新配置请求
 type UpdateConfigRequest struct {
-	OpenAI    *config.OpenAIConfig    `json:"openai,omitempty"`
-	FOFA      *config.FofaConfig      `json:"fofa,omitempty"`
-	MCP       *config.MCPConfig       `json:"mcp,omitempty"`
-	Tools     []ToolEnableStatus      `json:"tools,omitempty"`
-	Agent     *config.AgentConfig     `json:"agent,omitempty"`
-	Knowledge *config.KnowledgeConfig `json:"knowledge,omitempty"`
-	Robots    *config.RobotsConfig    `json:"robots,omitempty"`
+	OpenAI     *config.OpenAIConfig        `json:"openai,omitempty"`
+	FOFA       *config.FofaConfig          `json:"fofa,omitempty"`
+	MCP        *config.MCPConfig           `json:"mcp,omitempty"`
+	Tools      []ToolEnableStatus          `json:"tools,omitempty"`
+	Agent      *config.AgentConfig         `json:"agent,omitempty"`
+	Knowledge  *config.KnowledgeConfig     `json:"knowledge,omitempty"`
+	Robots     *config.RobotsConfig        `json:"robots,omitempty"`
+	MultiAgent *config.MultiAgentAPIUpdate `json:"multi_agent,omitempty"`
 }
 
 // ToolEnableStatus 工具启用状态
@@ -589,6 +615,23 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 			zap.Bool("wecom_enabled", h.config.Robots.Wecom.Enabled),
 			zap.Bool("dingtalk_enabled", h.config.Robots.Dingtalk.Enabled),
 			zap.Bool("lark_enabled", h.config.Robots.Lark.Enabled),
+		)
+	}
+
+	// 多代理标量（sub_agents 等仍由 config.yaml 维护）
+	if req.MultiAgent != nil {
+		h.config.MultiAgent.Enabled = req.MultiAgent.Enabled
+		dm := strings.TrimSpace(req.MultiAgent.DefaultMode)
+		if dm == "multi" || dm == "single" {
+			h.config.MultiAgent.DefaultMode = dm
+		}
+		h.config.MultiAgent.RobotUseMultiAgent = req.MultiAgent.RobotUseMultiAgent
+		h.config.MultiAgent.BatchUseMultiAgent = req.MultiAgent.BatchUseMultiAgent
+		h.logger.Info("更新多代理配置",
+			zap.Bool("enabled", h.config.MultiAgent.Enabled),
+			zap.String("default_mode", h.config.MultiAgent.DefaultMode),
+			zap.Bool("robot_use_multi_agent", h.config.MultiAgent.RobotUseMultiAgent),
+			zap.Bool("batch_use_multi_agent", h.config.MultiAgent.BatchUseMultiAgent),
 		)
 	}
 
@@ -910,6 +953,7 @@ func (h *ConfigHandler) saveConfig() error {
 	updateFOFAConfig(root, h.config.FOFA)
 	updateKnowledgeConfig(root, h.config.Knowledge)
 	updateRobotsConfig(root, h.config.Robots)
+	updateMultiAgentConfig(root, h.config.MultiAgent)
 	// 更新外部MCP配置（使用external_mcp.go中的函数，同一包中可直接调用）
 	// 读取原始配置以保持向后兼容
 	originalConfigs := make(map[string]map[string]bool)
@@ -1117,6 +1161,15 @@ func updateRobotsConfig(doc *yaml.Node, cfg config.RobotsConfig) {
 	setStringInMap(larkNode, "app_id", cfg.Lark.AppID)
 	setStringInMap(larkNode, "app_secret", cfg.Lark.AppSecret)
 	setStringInMap(larkNode, "verify_token", cfg.Lark.VerifyToken)
+}
+
+func updateMultiAgentConfig(doc *yaml.Node, cfg config.MultiAgentConfig) {
+	root := doc.Content[0]
+	maNode := ensureMap(root, "multi_agent")
+	setBoolInMap(maNode, "enabled", cfg.Enabled)
+	setStringInMap(maNode, "default_mode", cfg.DefaultMode)
+	setBoolInMap(maNode, "robot_use_multi_agent", cfg.RobotUseMultiAgent)
+	setBoolInMap(maNode, "batch_use_multi_agent", cfg.BatchUseMultiAgent)
 }
 
 func ensureMap(parent *yaml.Node, path ...string) *yaml.Node {

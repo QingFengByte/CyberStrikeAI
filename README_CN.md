@@ -91,6 +91,7 @@ CyberStrikeAI 是一款 **AI 原生安全测试平台**，基于 Go 构建，集
 - 🛡️ 漏洞管理功能：完整的漏洞 CRUD 操作，支持严重程度分级、状态流转、按对话/严重程度/状态过滤，以及统计看板
 - 📋 批量任务管理：创建任务队列，批量添加任务，依次顺序执行，支持任务编辑与状态跟踪
 - 🎭 角色化测试：预设安全测试角色（渗透测试、CTF、Web 应用扫描等），支持自定义提示词和工具限制
+- 🧩 **多代理模式（Eino DeepAgent）**：可选编排——协调主代理通过 `task` 调度 Markdown 定义的子代理；主代理见 `agents/orchestrator.md` 或 front matter `kind: orchestrator`，子代理为 `agents/*.md`；开启 `multi_agent.enabled` 后聊天可切换单代理/多代理（详见 [多代理说明](docs/MULTI_AGENT_EINO.md)）
 - 🎯 Skills 技能系统：20+ 预设安全测试技能（SQL 注入、XSS、API 安全等），可附加到角色或由 AI 按需调用
 - 📱 **机器人**：支持钉钉、飞书长连接，在手机端与 CyberStrikeAI 对话（配置与命令详见 [机器人使用说明](docs/robot.md)）
 - 🐚 **WebShell 管理**：添加与管理 WebShell 连接（兼容冰蝎/蚁剑等），通过虚拟终端执行命令、内置文件管理进行文件操作，并提供按连接维度保存历史的 AI 助手标签页；支持 PHP/ASP/ASPX/JSP 及自定义类型，可配置请求方法与命令参数。
@@ -193,6 +194,7 @@ go build -o cyberstrike-ai cmd/server/main.go
 
 ### 常用流程
 - **对话测试**：自然语言触发多步工具编排，SSE 实时输出。
+- **单代理 / 多代理**：配置 `multi_agent.enabled: true` 后，聊天界面可切换 **单代理**（原有 ReAct 循环）与 **多代理**（Eino DeepAgent + `task` 子代理）。多代理走 `/api/multi-agent/stream`，MCP 工具与单代理同源桥接。
 - **角色化测试**：从预设的安全测试角色（渗透测试、CTF、Web 应用扫描、API 安全测试等）中选择，自定义 AI 行为和可用工具。每个角色可应用自定义系统提示词，并可限制可用工具列表，实现聚焦的测试场景。
 - **工具监控**：查看任务队列、执行日志、大文件附件。
 - **会话历史**：所有对话与工具调用保存在 SQLite，可随时重放。
@@ -235,6 +237,15 @@ go build -o cyberstrike-ai cmd/server/main.go
    enabled: true
    ```
 2. 重启服务或重新加载配置，角色会出现在角色选择下拉菜单中。
+
+### 多代理模式（Eino DeepAgent）
+- **能力说明**：基于 CloudWeGo **Eino** `adk/prebuilt/deep` 的可选路径：**协调主代理**通过内置 **`task`** 工具启动短时**子代理**，各子代理独立推理，工具集来自当前聊天所选角色（与单代理一致来源）。
+- **Markdown 定义**：在 `agents_dir`（默认 `agents/`，相对 `config.yaml` 所在目录）维护：
+  - **主代理**：固定文件名 `orchestrator.md`，或任意 `.md` 且在 front matter 写 `kind: orchestrator`（**同一目录仅允许一个**主代理）。配置 Deep 的 name/id、description 与可选完整系统提示（正文）；正文为空时依次使用 `multi_agent.orchestrator_instruction`、Eino 内置默认提示。
+  - **子代理**：其余 `*.md`（YAML front matter + 正文作 instruction），不参与主代理定义的文件才会进入 `task` 可选列表。
+- **界面管理**：**Agents → Agent 管理** 对 Markdown 增删改查；HTTP API 前缀 `/api/multi-agent/markdown-agents`。
+- **配置项**：`config.yaml` 中 `multi_agent`：`enabled`、`default_mode`（`single` | `multi`）、`robot_use_multi_agent`、`batch_use_multi_agent`、`max_iteration`、`orchestrator_instruction` 等；可选在 YAML 写 `sub_agents` 与目录合并（同 `id` 时以 Markdown 为准）。
+- **更多细节**：流式事件、机器人与批量任务、排障等见 **[docs/MULTI_AGENT_EINO.md](docs/MULTI_AGENT_EINO.md)**。
 
 ### Skills 技能系统
 - **预设技能**：系统内置 20+ 个预设的安全测试技能（SQL 注入、XSS、API 安全、云安全、容器安全等），位于 `skills/` 目录。
@@ -426,6 +437,7 @@ CyberStrikeAI 支持通过三种传输模式连接外部 MCP 服务器：
 
 ### 自动化与安全
 - **REST API**：认证、会话、任务、监控、漏洞管理、角色管理等接口全部开放，可与 CI/CD 集成。
+- **多代理 API**：`POST /api/multi-agent/stream`（SSE，需启用多代理）、`POST /api/multi-agent`（非流式）；Markdown 子代理/主代理管理见 `/api/multi-agent/markdown-agents`（列表/读写/增删）。
 - **角色管理 API**：通过 `/api/roles` 端点管理安全测试角色：`GET /api/roles`（列表）、`GET /api/roles/:name`（获取角色）、`POST /api/roles`（创建角色）、`PUT /api/roles/:name`（更新角色）、`DELETE /api/roles/:name`（删除角色）。角色以 YAML 文件形式存储在 `roles/` 目录，支持热加载。
 - **漏洞管理 API**：通过 `/api/vulnerabilities` 端点管理漏洞：`GET /api/vulnerabilities`（列表，支持过滤）、`POST /api/vulnerabilities`（创建）、`GET /api/vulnerabilities/:id`（获取）、`PUT /api/vulnerabilities/:id`（更新）、`DELETE /api/vulnerabilities/:id`（删除）、`GET /api/vulnerabilities/stats`（统计）。
 - **批量任务 API**：通过 `/api/batch-tasks` 端点管理批量任务队列：`POST /api/batch-tasks`（创建队列）、`GET /api/batch-tasks`（列表）、`GET /api/batch-tasks/:queueId`（获取队列）、`POST /api/batch-tasks/:queueId/start`（开始执行）、`POST /api/batch-tasks/:queueId/cancel`（取消）、`DELETE /api/batch-tasks/:queueId`（删除队列）、`POST /api/batch-tasks/:queueId/tasks`（添加任务）、`PUT /api/batch-tasks/:queueId/tasks/:taskId`（更新任务）、`DELETE /api/batch-tasks/:queueId/tasks/:taskId`（删除任务）。任务依次顺序执行，每个任务创建独立对话，支持完整状态跟踪。
@@ -474,6 +486,13 @@ knowledge:
     hybrid_weight: 0.7  # 混合检索权重（0-1），向量检索的权重，1.0 表示纯向量检索，0.0 表示纯关键词检索
 roles_dir: "roles"  # 角色配置文件目录（相对于配置文件所在目录）
 skills_dir: "skills"  # Skills 目录（相对于配置文件所在目录）
+agents_dir: "agents"  # 多代理 Markdown（主代理 orchestrator.md + 子代理 *.md）
+multi_agent:
+  enabled: false
+  default_mode: "single"   # single | multi（开启多代理时的界面默认模式）
+  robot_use_multi_agent: false
+  batch_use_multi_agent: false
+  orchestrator_instruction: ""  # 可选；orchestrator.md 正文为空时使用
 ```
 
 ### 工具模版示例（`tools/nmap.yaml`）
@@ -518,6 +537,7 @@ enabled: true
 
 ## 相关文档
 
+- [多代理模式（Eino）](docs/MULTI_AGENT_EINO.md)：DeepAgent 编排、`agents/*.md`、接口与流式说明。
 - [机器人使用说明（钉钉 / 飞书）](docs/robot.md)：在手机端通过钉钉、飞书与 CyberStrikeAI 对话的完整配置步骤、命令与排查说明，**建议按该文档操作以避免走弯路**。
 
 ## 项目结构
@@ -530,7 +550,8 @@ CyberStrikeAI/
 ├── tools/               # YAML 工具目录（含 100+ 示例）
 ├── roles/               # 角色配置文件目录（含 12+ 预设安全测试角色）
 ├── skills/              # Skills 目录（含 20+ 预设安全测试技能）
-├── docs/                # 说明文档（如机器人使用说明）
+├── agents/              # 多代理 Markdown（orchestrator.md + 子代理 *.md）
+├── docs/                # 说明文档（如机器人使用说明、MULTI_AGENT_EINO.md）
 ├── images/              # 文档配图
 ├── config.yaml          # 运行配置
 ├── run.sh               # 启动脚本

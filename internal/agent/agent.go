@@ -1890,6 +1890,25 @@ func (a *Agent) repairOrphanToolMessages(messages *[]ChatMessage) bool {
 	return removed
 }
 
+// ToolsForRole 返回与单 Agent 循环一致的工具定义（OpenAI function 格式），供 Eino DeepAgent 等编排层绑定 MCP 工具。
+func (a *Agent) ToolsForRole(roleTools []string) []Tool {
+	return a.getAvailableTools(roleTools)
+}
+
+// ExecuteMCPToolForConversation 在指定会话上下文中执行 MCP 工具（行为与主 Agent 循环中的工具调用一致，如自动注入 conversation_id）。
+func (a *Agent) ExecuteMCPToolForConversation(ctx context.Context, conversationID, toolName string, args map[string]interface{}) (*ToolExecutionResult, error) {
+	a.mu.Lock()
+	prev := a.currentConversationID
+	a.currentConversationID = conversationID
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.currentConversationID = prev
+		a.mu.Unlock()
+	}()
+	return a.executeToolViaMCP(ctx, toolName, args)
+}
+
 // extractQuotedToolName 尝试从错误信息中提取被引用的工具名称
 func extractQuotedToolName(errMsg string) string {
 	start := strings.Index(errMsg, "\"")

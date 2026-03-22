@@ -19,6 +19,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp/builtin"
+	"cyberstrike-ai/internal/multiagent"
 	"cyberstrike-ai/internal/skills"
 
 	"github.com/gin-gonic/gin"
@@ -77,7 +78,8 @@ type AgentHandler struct {
 	knowledgeManager interface {    // 知识库管理器接口
 		LogRetrieval(conversationID, messageID, query, riskType string, retrievedItems []string) error
 	}
-	skillsManager *skills.Manager // Skills管理器
+	skillsManager       *skills.Manager // Skills管理器
+	agentsMarkdownDir   string          // 多代理：Markdown 子 Agent 目录（绝对路径，空则不从磁盘合并）
 }
 
 // NewAgentHandler 创建新的Agent处理器
@@ -112,6 +114,11 @@ func (h *AgentHandler) SetSkillsManager(manager *skills.Manager) {
 	h.skillsManager = manager
 }
 
+// SetAgentsMarkdownDir 设置 agents/*.md 子代理目录（绝对路径）；空表示仅使用 config.yaml 中的 sub_agents。
+func (h *AgentHandler) SetAgentsMarkdownDir(absDir string) {
+	h.agentsMarkdownDir = strings.TrimSpace(absDir)
+}
+
 // ChatAttachment 聊天附件（用户上传的文件）
 type ChatAttachment struct {
 	FileName string `json:"fileName"` // 文件名
@@ -123,8 +130,8 @@ type ChatAttachment struct {
 type ChatRequest struct {
 	Message              string           `json:"message" binding:"required"`
 	ConversationID       string           `json:"conversationId,omitempty"`
-	Role                 string           `json:"role,omitempty"`                 // 角色名称
-	Attachments          []ChatAttachment  `json:"attachments,omitempty"`
+	Role                 string           `json:"role,omitempty"` // 角色名称
+	Attachments          []ChatAttachment `json:"attachments,omitempty"`
 	WebShellConnectionID string           `json:"webshellConnectionId,omitempty"` // WebShell 管理 - AI 助手：当前选中的连接 ID，仅使用 webshell_* 工具
 }
 
@@ -315,7 +322,7 @@ func (h *AgentHandler) AgentLoop(c *gin.Context) {
 
 	// 应用角色用户提示词和工具配置
 	finalMessage := req.Message
-	var roleTools []string // 角色配置的工具列表
+	var roleTools []string  // 角色配置的工具列表
 	var roleSkills []string // 角色配置的skills列表（用于提示AI，但不硬编码内容）
 
 	// WebShell AI 助手模式：绑定当前连接，仅开放 webshell_* 工具并注入 connection_id
@@ -483,6 +490,53 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, conversationI
 		assistantMessageID = assistantMsg.ID
 	}
 	progressCallback := h.createProgressCallback(conversationID, assistantMessageID, nil)
+
+	useRobotMulti := h.config != nil && h.config.MultiAgent.Enabled && h.config.MultiAgent.RobotUseMultiAgent
+	if useRobotMulti {
+		resultMA, errMA := multiagent.RunDeepAgent(
+			ctx,
+			h.config,
+			&h.config.MultiAgent,
+			h.agent,
+			h.logger,
+			conversationID,
+			finalMessage,
+			agentHistoryMessages,
+			roleTools,
+			progressCallback,
+			h.agentsMarkdownDir,
+		)
+		if errMA != nil {
+			errMsg := "执行失败: " + errMA.Error()
+			if assistantMessageID != "" {
+				_, _ = h.db.Exec("UPDATE messages SET content = ? WHERE id = ?", errMsg, assistantMessageID)
+				_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
+			}
+			return "", conversationID, errMA
+		}
+		if assistantMessageID != "" {
+			mcpIDsJSON := ""
+			if len(resultMA.MCPExecutionIDs) > 0 {
+				jsonData, _ := json.Marshal(resultMA.MCPExecutionIDs)
+				mcpIDsJSON = string(jsonData)
+			}
+			_, err = h.db.Exec(
+				"UPDATE messages SET content = ?, mcp_execution_ids = ? WHERE id = ?",
+				resultMA.Response, mcpIDsJSON, assistantMessageID,
+			)
+			if err != nil {
+				h.logger.Warn("机器人：更新助手消息失败", zap.Error(err))
+			}
+		} else {
+			if _, err = h.db.AddMessage(conversationID, "assistant", resultMA.Response, resultMA.MCPExecutionIDs); err != nil {
+				h.logger.Warn("机器人：保存助手消息失败", zap.Error(err))
+			}
+		}
+		if resultMA.LastReActInput != "" || resultMA.LastReActOutput != "" {
+			_ = h.db.SaveReActData(conversationID, resultMA.LastReActInput, resultMA.LastReActOutput)
+		}
+		return resultMA.Response, conversationID, nil
+	}
 
 	result, err := h.agent.AgentLoopWithProgress(ctx, finalMessage, agentHistoryMessages, conversationID, progressCallback, roleTools, roleSkills)
 	if err != nil {
@@ -662,6 +716,14 @@ func (h *AgentHandler) createProgressCallback(conversationID, assistantMessageID
 			}
 		}
 
+		// 子代理回复流式增量不落库；结束时合并为一条 eino_agent_reply
+		if assistantMessageID != "" && eventType == "eino_agent_reply_stream_end" {
+			if err := h.db.AddProcessDetail(assistantMessageID, conversationID, "eino_agent_reply", message, data); err != nil {
+				h.logger.Warn("保存过程详情失败", zap.Error(err), zap.String("eventType", eventType))
+			}
+			return
+		}
+
 		// 保存过程详情到数据库（排除response/done事件，它们会在后面单独处理）
 		// 另外：response_start/response_delta 是模型流式增量，保存会导致过程详情膨胀，因此不落库。
 		if assistantMessageID != "" &&
@@ -671,7 +733,10 @@ func (h *AgentHandler) createProgressCallback(conversationID, assistantMessageID
 			eventType != "response_delta" &&
 			eventType != "tool_result_delta" &&
 			eventType != "thinking_stream_start" &&
-			eventType != "thinking_stream_delta" {
+			eventType != "thinking_stream_delta" &&
+			eventType != "eino_agent_reply_stream_start" &&
+			eventType != "eino_agent_reply_stream_delta" &&
+			eventType != "eino_agent_reply_stream_end" {
 			if err := h.db.AddProcessDetail(assistantMessageID, conversationID, eventType, message, data); err != nil {
 				h.logger.Warn("保存过程详情失败", zap.Error(err), zap.String("eventType", eventType))
 			}
@@ -1499,7 +1564,7 @@ func (h *AgentHandler) executeBatchQueue(queueID string) {
 
 		// 应用角色用户提示词和工具配置
 		finalMessage := task.Message
-		var roleTools []string // 角色配置的工具列表
+		var roleTools []string  // 角色配置的工具列表
 		var roleSkills []string // 角色配置的skills列表（用于提示AI，但不硬编码内容）
 		if queue.Role != "" && queue.Role != "默认" {
 			if h.config.Roles != nil {
@@ -1553,28 +1618,42 @@ func (h *AgentHandler) executeBatchQueue(queueID string) {
 		h.batchTaskManager.SetTaskCancel(queueID, cancel)
 		// 使用队列配置的角色工具列表（如果为空，表示使用所有工具）
 		// 注意：skills不会硬编码注入，但会在系统提示词中提示AI这个角色推荐使用哪些skills
-		result, err := h.agent.AgentLoopWithProgress(ctx, finalMessage, []agent.ChatMessage{}, conversationID, progressCallback, roleTools, roleSkills)
+		useBatchMulti := h.config != nil && h.config.MultiAgent.Enabled && h.config.MultiAgent.BatchUseMultiAgent
+		var result *agent.AgentLoopResult
+		var resultMA *multiagent.RunResult
+		var runErr error
+		if useBatchMulti {
+			resultMA, runErr = multiagent.RunDeepAgent(ctx, h.config, &h.config.MultiAgent, h.agent, h.logger, conversationID, finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, h.agentsMarkdownDir)
+		} else {
+			result, runErr = h.agent.AgentLoopWithProgress(ctx, finalMessage, []agent.ChatMessage{}, conversationID, progressCallback, roleTools, roleSkills)
+		}
 		// 任务执行完成，清理取消函数
 		h.batchTaskManager.SetTaskCancel(queueID, nil)
 		cancel()
 
-		if err != nil {
+		if runErr != nil {
 			// 检查是否是取消错误
 			// 1. 直接检查是否是 context.Canceled（包括包装后的错误）
 			// 2. 检查错误消息中是否包含"context canceled"或"cancelled"关键字
 			// 3. 检查 result.Response 中是否包含取消相关的消息
-			errStr := err.Error()
-			isCancelled := errors.Is(err, context.Canceled) ||
+			errStr := runErr.Error()
+			partialResp := ""
+			if result != nil {
+				partialResp = result.Response
+			} else if resultMA != nil {
+				partialResp = resultMA.Response
+			}
+			isCancelled := errors.Is(runErr, context.Canceled) ||
 				strings.Contains(strings.ToLower(errStr), "context canceled") ||
 				strings.Contains(strings.ToLower(errStr), "context cancelled") ||
-				(result != nil && result.Response != "" && (strings.Contains(result.Response, "任务已被取消") || strings.Contains(result.Response, "任务执行中断")))
+				(partialResp != "" && (strings.Contains(partialResp, "任务已被取消") || strings.Contains(partialResp, "任务执行中断")))
 
 			if isCancelled {
 				h.logger.Info("批量任务被取消", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID))
 				cancelMsg := "任务已被用户取消，后续操作已停止。"
-				// 如果result中有更具体的取消消息，使用它
-				if result != nil && result.Response != "" && (strings.Contains(result.Response, "任务已被取消") || strings.Contains(result.Response, "任务执行中断")) {
-					cancelMsg = result.Response
+				// 如果执行结果中有更具体的取消消息，使用它
+				if partialResp != "" && (strings.Contains(partialResp, "任务已被取消") || strings.Contains(partialResp, "任务执行中断")) {
+					cancelMsg = partialResp
 				}
 				// 更新助手消息内容
 				if assistantMessageID != "" {
@@ -1601,11 +1680,15 @@ func (h *AgentHandler) executeBatchQueue(queueID string) {
 					if err := h.db.SaveReActData(conversationID, result.LastReActInput, result.LastReActOutput); err != nil {
 						h.logger.Warn("保存取消任务的ReAct数据失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
 					}
+				} else if resultMA != nil && (resultMA.LastReActInput != "" || resultMA.LastReActOutput != "") {
+					if err := h.db.SaveReActData(conversationID, resultMA.LastReActInput, resultMA.LastReActOutput); err != nil {
+						h.logger.Warn("保存取消任务的ReAct数据失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
+					}
 				}
 				h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, "cancelled", cancelMsg, "", conversationID)
 			} else {
-				h.logger.Error("批量任务执行失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.Error(err))
-				errorMsg := "执行失败: " + err.Error()
+				h.logger.Error("批量任务执行失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.Error(runErr))
+				errorMsg := "执行失败: " + runErr.Error()
 				// 更新助手消息内容
 				if assistantMessageID != "" {
 					if _, updateErr := h.db.Exec(
@@ -1620,42 +1703,57 @@ func (h *AgentHandler) executeBatchQueue(queueID string) {
 						h.logger.Warn("保存错误详情失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
 					}
 				}
-				h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, "failed", "", err.Error())
+				h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, "failed", "", runErr.Error())
 			}
 		} else {
 			h.logger.Info("批量任务执行成功", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID))
 
+			var resText string
+			var mcpIDs []string
+			var lastIn, lastOut string
+			if useBatchMulti {
+				resText = resultMA.Response
+				mcpIDs = resultMA.MCPExecutionIDs
+				lastIn = resultMA.LastReActInput
+				lastOut = resultMA.LastReActOutput
+			} else {
+				resText = result.Response
+				mcpIDs = result.MCPExecutionIDs
+				lastIn = result.LastReActInput
+				lastOut = result.LastReActOutput
+			}
+
 			// 更新助手消息内容
 			if assistantMessageID != "" {
 				mcpIDsJSON := ""
-				if len(result.MCPExecutionIDs) > 0 {
-					jsonData, _ := json.Marshal(result.MCPExecutionIDs)
+				if len(mcpIDs) > 0 {
+					jsonData, _ := json.Marshal(mcpIDs)
 					mcpIDsJSON = string(jsonData)
 				}
 				if _, updateErr := h.db.Exec(
 					"UPDATE messages SET content = ?, mcp_execution_ids = ? WHERE id = ?",
-					result.Response,
+					resText,
 					mcpIDsJSON,
 					assistantMessageID,
 				); updateErr != nil {
 					h.logger.Warn("更新助手消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(updateErr))
 					// 如果更新失败，尝试创建新消息
-					_, err = h.db.AddMessage(conversationID, "assistant", result.Response, result.MCPExecutionIDs)
+					_, err = h.db.AddMessage(conversationID, "assistant", resText, mcpIDs)
 					if err != nil {
 						h.logger.Error("保存助手消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.Error(err))
 					}
 				}
 			} else {
 				// 如果没有预先创建的助手消息，创建一个新的
-				_, err = h.db.AddMessage(conversationID, "assistant", result.Response, result.MCPExecutionIDs)
+				_, err = h.db.AddMessage(conversationID, "assistant", resText, mcpIDs)
 				if err != nil {
 					h.logger.Error("保存助手消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.Error(err))
 				}
 			}
 
 			// 保存ReAct数据
-			if result.LastReActInput != "" || result.LastReActOutput != "" {
-				if err := h.db.SaveReActData(conversationID, result.LastReActInput, result.LastReActOutput); err != nil {
+			if lastIn != "" || lastOut != "" {
+				if err := h.db.SaveReActData(conversationID, lastIn, lastOut); err != nil {
 					h.logger.Warn("保存ReAct数据失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
 				} else {
 					h.logger.Info("已保存ReAct数据", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID))
@@ -1663,7 +1761,7 @@ func (h *AgentHandler) executeBatchQueue(queueID string) {
 			}
 
 			// 保存结果
-			h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, "completed", result.Response, "", conversationID)
+			h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, "completed", resText, "", conversationID)
 		}
 
 		// 移动到下一个任务
