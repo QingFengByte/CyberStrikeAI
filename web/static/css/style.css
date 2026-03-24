@@ -8860,6 +8860,71 @@ header {
     border-radius: 10px;
     border: 1px solid var(--border-color);
 }
+.webshell-terminal-sessions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 8px;
+    height: 34px;
+    background: #0b0f14;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    overflow-x: auto;
+}
+.webshell-terminal-session {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    height: 30px;
+    color: #c9d1d9;
+}
+.webshell-terminal-session.active {
+    background: #0d1117;
+    border-color: rgba(88, 166, 255, 0.45);
+    color: #e6edf3;
+}
+.webshell-terminal-session-main {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-size: 12px;
+    height: 100%;
+    padding: 0 10px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.webshell-terminal-session-close {
+    border: 0;
+    background: transparent;
+    color: #8b949e;
+    width: 20px;
+    height: 100%;
+    cursor: pointer;
+    font-size: 12px;
+}
+.webshell-terminal-session-close:hover {
+    color: #f85149;
+    background: rgba(248, 81, 73, 0.08);
+}
+.webshell-terminal-session-add {
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-bottom: none;
+    background: rgba(255, 255, 255, 0.03);
+    color: #8b949e;
+    height: 30px;
+    width: 28px;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.webshell-terminal-session-add:hover {
+    color: #e6edf3;
+    background: rgba(255, 255, 255, 0.08);
+}
 .webshell-quick-label {
     font-size: 12px;
     font-weight: 500;
@@ -8869,20 +8934,48 @@ header {
 .webshell-terminal-toolbar .btn-ghost {
     font-size: 12px;
 }
+.webshell-terminal-status {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+.webshell-terminal-status.idle {
+    color: #166534;
+    background: rgba(34, 197, 94, 0.1);
+    border-color: rgba(34, 197, 94, 0.25);
+}
+.webshell-terminal-status.running {
+    color: #9a3412;
+    background: rgba(251, 146, 60, 0.14);
+    border-color: rgba(251, 146, 60, 0.28);
+}
 
 #webshell-pane-terminal {
     flex-direction: column;
 }
 
 /* 仅外框圆角，内部不做额外装饰，避免挡住文字 */
-.webshell-terminal-container {
+.webshell-terminal-shell {
     flex: 1;
     min-height: 360px;
-    padding: 0;
+    display: flex;
+    flex-direction: column;
     background: #0d1117;
     border-radius: 12px;
     overflow: hidden;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.webshell-terminal-container {
+    flex: 1;
+    min-height: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     transform: translateZ(0);

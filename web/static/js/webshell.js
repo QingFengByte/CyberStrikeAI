@@ -14,6 +14,11 @@ let webshellTerminalResizeContainer = null;
 let webshellCurrentConn = null;
 let webshellLineBuffer = '';
 let webshellRunning = false;
+let webshellTerminalRunning = false;
+let webshellTerminalLogsByConn = {};
+let webshellTerminalSessionsByConn = {};
+let webshellPersistLoadedByConn = {};
+let webshellPersistSaveTimersByConn = {};
 // 按连接保存命令历史，用于上下键
 let webshellHistoryByConn = {};
 let webshellHistoryIndex = -1;
@@ -146,6 +151,13 @@ function wsT(key) {
         'webshell.testFailed': '连通性测试失败',
         'webshell.testNoExpectedOutput': 'Shell 返回了响应但未得到预期输出，请检查连接密码与命令参数名',
         'webshell.clearScreen': '清屏',
+        'webshell.copyTerminalLog': '复制日志',
+        'webshell.terminalIdle': '空闲',
+        'webshell.terminalRunning': '执行中',
+        'webshell.terminalCopyOk': '日志已复制',
+        'webshell.terminalCopyFail': '复制失败',
+        'webshell.terminalNewWindow': '新终端',
+        'webshell.terminalWindowPrefix': '终端',
         'webshell.running': '执行中…',
         'webshell.waitFinish': '请等待当前命令执行完成',
         'webshell.newDir': '新建目录',
@@ -201,6 +213,10 @@ function bindWebshellClearOnce() {
             destroyWebshellTerminal();
             webshellLineBuffer = '';
             webshellHistoryIndex = -1;
+            if (webshellCurrentConn && webshellCurrentConn.id) {
+                var sid = getActiveWebshellTerminalSessionId(webshellCurrentConn.id);
+                clearWebshellTerminalLog(getWebshellTerminalSessionKey(webshellCurrentConn.id, sid));
+            }
             initWebshellTerminal(webshellCurrentConn);
         } finally {
             setTimeout(function () { webshellClearInProgress = false; }, 100);
@@ -341,6 +357,8 @@ function destroyWebshellTerminal() {
     webshellTerminalFitAddon = null;
     webshellLineBuffer = '';
     webshellRunning = false;
+    webshellTerminalRunning = false;
+    setWebshellTerminalStatus(false);
 }
 
 // 渲染连接列表
@@ -543,6 +561,195 @@ function normalizeWebshellPath(path) {
     return p || '.';
 }
 
+function getWebshellTerminalSessionKey(connId, sessionId) {
+    if (!connId || !sessionId) return '';
+    return String(connId) + '::' + String(sessionId);
+}
+
+function normalizeWebshellTerminalSessions(raw) {
+    var state = raw && typeof raw === 'object' ? raw : {};
+    var list = Array.isArray(state.sessions) ? state.sessions.slice() : [];
+    if (!list.length) {
+        list = [{ id: 't1', name: (wsT('webshell.terminalWindowPrefix') || '终端') + '1' }];
+    }
+    list = list.map(function (s, i) {
+        var id = (s && s.id ? String(s.id) : ('t' + (i + 1)));
+        var name = (s && s.name ? String(s.name) : ((wsT('webshell.terminalWindowPrefix') || '终端') + (i + 1)));
+        return { id: id, name: name };
+    });
+    var activeId = state.activeId;
+    if (!activeId || !list.some(function (s) { return s.id === activeId; })) activeId = list[0].id;
+    return { sessions: list, activeId: activeId };
+}
+
+function getWebshellTerminalSessions(connId) {
+    if (!connId) return normalizeWebshellTerminalSessions(null);
+    if (webshellTerminalSessionsByConn[connId]) return webshellTerminalSessionsByConn[connId];
+    var state = normalizeWebshellTerminalSessions(null);
+    webshellTerminalSessionsByConn[connId] = state;
+    return state;
+}
+
+function saveWebshellTerminalSessions(connId, state) {
+    if (!connId || !state) return;
+    var normalized = normalizeWebshellTerminalSessions(state);
+    webshellTerminalSessionsByConn[connId] = normalized;
+    queueWebshellPersistStateSave(connId);
+}
+
+function getActiveWebshellTerminalSessionId(connId) {
+    return getWebshellTerminalSessions(connId).activeId;
+}
+
+function getWebshellTerminalLog(connId) {
+    if (!connId) return '';
+    if (typeof webshellTerminalLogsByConn[connId] === 'string') return webshellTerminalLogsByConn[connId];
+    webshellTerminalLogsByConn[connId] = '';
+    return '';
+}
+
+function saveWebshellTerminalLog(connId, content) {
+    if (!connId) return;
+    var text = String(content || '');
+    var maxLen = 50000; // keep recent terminal output only
+    if (text.length > maxLen) text = text.slice(text.length - maxLen);
+    webshellTerminalLogsByConn[connId] = text;
+}
+
+function appendWebshellTerminalLog(connId, chunk) {
+    if (!connId || !chunk) return;
+    var current = getWebshellTerminalLog(connId);
+    saveWebshellTerminalLog(connId, current + String(chunk));
+}
+
+function clearWebshellTerminalLog(connId) {
+    if (!connId) return;
+    webshellTerminalLogsByConn[connId] = '';
+}
+
+function buildWebshellPersistState(connId) {
+    var dbState = getWebshellDbState({ id: connId });
+    var terminalSessions = getWebshellTerminalSessions(connId);
+    return {
+        dbState: dbState || null,
+        terminalSessions: terminalSessions || null
+    };
+}
+
+function applyWebshellPersistState(connId, state) {
+    if (!connId || !state || typeof state !== 'object') return;
+    if (state.dbState && typeof state.dbState === 'object') {
+        var key = getWebshellDbStateStorageKey({ id: connId });
+        webshellDbConfigByConn[key] = normalizeWebshellDbState(state.dbState);
+    }
+    if (state.terminalSessions && typeof state.terminalSessions === 'object') {
+        webshellTerminalSessionsByConn[connId] = normalizeWebshellTerminalSessions(state.terminalSessions);
+    }
+}
+
+function queueWebshellPersistStateSave(connId) {
+    if (!connId || typeof apiFetch !== 'function') return;
+    if (webshellPersistSaveTimersByConn[connId]) clearTimeout(webshellPersistSaveTimersByConn[connId]);
+    webshellPersistSaveTimersByConn[connId] = setTimeout(function () {
+        delete webshellPersistSaveTimersByConn[connId];
+        var payload = buildWebshellPersistState(connId);
+        apiFetch('/api/webshell/connections/' + encodeURIComponent(connId) + '/state', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ state: payload })
+        }).catch(function () {});
+    }, 500);
+}
+
+function ensureWebshellPersistStateLoaded(conn) {
+    if (!conn || !conn.id || typeof apiFetch !== 'function') return Promise.resolve();
+    if (webshellPersistLoadedByConn[conn.id]) return Promise.resolve();
+    return apiFetch('/api/webshell/connections/' + encodeURIComponent(conn.id) + '/state', { method: 'GET' })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('load state failed')); })
+        .then(function (data) {
+            applyWebshellPersistState(conn.id, data && data.state ? data.state : {});
+            webshellPersistLoadedByConn[conn.id] = true;
+        })
+        .catch(function () {
+            webshellPersistLoadedByConn[conn.id] = true;
+        });
+}
+
+function setWebshellTerminalStatus(running) {
+    webshellTerminalRunning = !!running;
+    var el = document.getElementById('webshell-terminal-status');
+    if (!el) return;
+    el.classList.toggle('running', !!running);
+    el.classList.toggle('idle', !running);
+    el.textContent = running ? (wsT('webshell.terminalRunning') || '执行中') : (wsT('webshell.terminalIdle') || '空闲');
+}
+
+function renderWebshellTerminalSessions(conn) {
+    if (!conn || !conn.id) return;
+    var tabsEl = document.getElementById('webshell-terminal-sessions');
+    if (!tabsEl) return;
+    var connId = conn.id;
+    var state = getWebshellTerminalSessions(connId);
+    var html = '';
+    state.sessions.forEach(function (s) {
+        var active = s.id === state.activeId;
+        html += '<div class="webshell-terminal-session' + (active ? ' active' : '') + '">' +
+            '<button type="button" class="webshell-terminal-session-main" data-action="switch" data-terminal-id="' + escapeHtml(s.id) + '">' + escapeHtml(s.name) + '</button>' +
+            '<button type="button" class="webshell-terminal-session-close" data-action="close" data-terminal-id="' + escapeHtml(s.id) + '" title="' + escapeHtml(wsT('common.close') || '关闭') + '">×</button>' +
+            '</div>';
+    });
+    html += '<button type="button" class="webshell-terminal-session-add" data-action="add" title="' + escapeHtml(wsT('webshell.terminalNewWindow') || '新终端') + '">+</button>';
+    tabsEl.innerHTML = html;
+    tabsEl.querySelectorAll('[data-action]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var action = btn.getAttribute('data-action') || '';
+            var targetId = btn.getAttribute('data-terminal-id') || '';
+            if (webshellRunning || webshellTerminalRunning) return;
+            if (action === 'add') {
+                var nextState = getWebshellTerminalSessions(connId);
+                var seq = nextState.sessions.length + 1;
+                var nextId = 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+                var prefix = wsT('webshell.terminalWindowPrefix') || '终端';
+                nextState.sessions.push({ id: nextId, name: prefix + seq });
+                nextState.activeId = nextId;
+                saveWebshellTerminalSessions(connId, nextState);
+                destroyWebshellTerminal();
+                initWebshellTerminal(conn);
+                renderWebshellTerminalSessions(conn);
+                return;
+            }
+            if (!targetId) return;
+            if (action === 'close') {
+                var curr2 = getWebshellTerminalSessions(connId);
+                if (curr2.sessions.length <= 1) return;
+                var idx2 = curr2.sessions.findIndex(function (s) { return s.id === targetId; });
+                if (idx2 < 0) return;
+                curr2.sessions.splice(idx2, 1);
+                if (curr2.activeId === targetId) {
+                    var fallback = curr2.sessions[Math.max(0, idx2 - 1)] || curr2.sessions[0];
+                    curr2.activeId = fallback.id;
+                }
+                saveWebshellTerminalSessions(connId, curr2);
+                // 清理该终端的日志与历史
+                var terminalKey = getWebshellTerminalSessionKey(connId, targetId);
+                clearWebshellTerminalLog(terminalKey);
+                delete webshellHistoryByConn[terminalKey];
+                destroyWebshellTerminal();
+                initWebshellTerminal(conn);
+                renderWebshellTerminalSessions(conn);
+                return;
+            }
+            if (targetId === getActiveWebshellTerminalSessionId(connId)) return;
+            var curr = getWebshellTerminalSessions(connId);
+            curr.activeId = targetId;
+            saveWebshellTerminalSessions(connId, curr);
+            destroyWebshellTerminal();
+            initWebshellTerminal(conn);
+            renderWebshellTerminalSessions(conn);
+        });
+    });
+}
+
 function getWebshellTreeState(conn) {
     var key = safeConnIdForStorage(conn);
     if (!key) return null;
@@ -602,10 +809,6 @@ function getWebshellDbState(conn) {
     if (!key) return normalizeWebshellDbState(null);
     if (webshellDbConfigByConn[key]) return webshellDbConfigByConn[key];
     var state = normalizeWebshellDbState(null);
-    try {
-        var raw = localStorage.getItem(key);
-        if (raw) state = normalizeWebshellDbState(JSON.parse(raw));
-    } catch (e) {}
     webshellDbConfigByConn[key] = state;
     return state;
 }
@@ -615,7 +818,7 @@ function saveWebshellDbState(conn, state) {
     if (!key || !state) return;
     var normalized = normalizeWebshellDbState(state);
     webshellDbConfigByConn[key] = normalized;
-    try { localStorage.setItem(key, JSON.stringify(normalized)); } catch (e) {}
+    if (conn && conn.id) queueWebshellPersistStateSave(conn.id);
 }
 
 function getWebshellDbConfig(conn) {
@@ -1084,7 +1287,7 @@ function webshellAiConvListSelect(conn, convId, messagesContainer, listEl) {
 }
 
 // 选择连接：渲染终端 + 文件管理 Tab，并初始化终端
-function selectWebshell(id) {
+function selectWebshell(id, stateReady) {
     currentWebshellId = id;
     renderWebshellList();
     const conn = webshellConnections.find(c => c.id === id);
@@ -1092,6 +1295,12 @@ function selectWebshell(id) {
     if (!workspace) return;
     if (!conn) {
         workspace.innerHTML = '<div class="webshell-workspace-placeholder">' + wsT('webshell.selectOrAdd') + '</div>';
+        return;
+    }
+    if (!stateReady) {
+        ensureWebshellPersistStateLoaded(conn).then(function () {
+            if (currentWebshellId === id) selectWebshell(id, true);
+        });
         return;
     }
 
@@ -1108,6 +1317,8 @@ function selectWebshell(id) {
         '<div id="webshell-pane-terminal" class="webshell-pane active">' +
         '<div class="webshell-terminal-toolbar">' +
         '<button type="button" class="btn-ghost btn-sm" id="webshell-terminal-clear" title="' + (wsT('webshell.clearScreen') || '清屏') + '">' + (wsT('webshell.clearScreen') || '清屏') + '</button> ' +
+        '<button type="button" class="btn-ghost btn-sm" id="webshell-terminal-copy-log" title="' + (wsT('webshell.copyTerminalLog') || '复制日志') + '">' + (wsT('webshell.copyTerminalLog') || '复制日志') + '</button> ' +
+        '<span id="webshell-terminal-status" class="webshell-terminal-status idle">' + (wsT('webshell.terminalIdle') || '空闲') + '</span> ' +
         '<span class="webshell-quick-label">' + (wsT('webshell.quickCommands') || '快捷命令') + ':</span> ' +
         '<button type="button" class="btn-ghost btn-sm webshell-quick-cmd" data-cmd="whoami">whoami</button> ' +
         '<button type="button" class="btn-ghost btn-sm webshell-quick-cmd" data-cmd="id">id</button> ' +
@@ -1121,7 +1332,10 @@ function selectWebshell(id) {
         '<button type="button" class="btn-ghost btn-sm webshell-quick-cmd" data-cmd="ps aux">ps aux</button> ' +
         '<button type="button" class="btn-ghost btn-sm webshell-quick-cmd" data-cmd="netstat -tulnp">netstat</button>' +
         '</div>' +
+        '<div class="webshell-terminal-shell">' +
+        '<div id="webshell-terminal-sessions" class="webshell-terminal-sessions"></div>' +
         '<div id="webshell-terminal-container" class="webshell-terminal-container"></div>' +
+        '</div>' +
         '</div>' +
         '<div id="webshell-pane-file" class="webshell-pane">' +
         '<div class="webshell-file-layout">' +
@@ -1229,6 +1443,34 @@ function selectWebshell(id) {
     });
 
     // 清屏由 bindWebshellClearOnce 统一事件委托处理，此处不再绑定，避免重复绑定导致一次点击出现多个 shell>
+    var terminalCopyLogBtn = document.getElementById('webshell-terminal-copy-log');
+    if (terminalCopyLogBtn) {
+        terminalCopyLogBtn.addEventListener('click', function () {
+            if (!webshellCurrentConn || !webshellCurrentConn.id) return;
+            var activeId = getActiveWebshellTerminalSessionId(webshellCurrentConn.id);
+            var log = getWebshellTerminalLog(getWebshellTerminalSessionKey(webshellCurrentConn.id, activeId)) || '';
+            if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(log).then(function () {
+                    terminalCopyLogBtn.title = wsT('webshell.terminalCopyOk') || '日志已复制';
+                    setTimeout(function () {
+                        terminalCopyLogBtn.title = wsT('webshell.copyTerminalLog') || '复制日志';
+                    }, 1200);
+                }).catch(function () {
+                    terminalCopyLogBtn.title = wsT('webshell.terminalCopyFail') || '复制失败';
+                });
+                return;
+            }
+            try {
+                var ta = document.createElement('textarea');
+                ta.value = log;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+            } catch (e) {}
+        });
+    }
+    renderWebshellTerminalSessions(conn);
     // 快捷命令：点击后执行并输出到终端
     workspace.querySelectorAll('.webshell-quick-cmd').forEach(function (btn) {
         btn.addEventListener('click', function () {
@@ -1996,19 +2238,31 @@ function pushWebshellHistory(connId, cmd) {
 // 执行快捷命令并将输出写入当前终端
 function runQuickCommand(cmd) {
     if (!webshellCurrentConn || !webshellTerminalInstance) return;
-    if (webshellRunning) return;
+    if (webshellRunning || webshellTerminalRunning) return;
     var term = webshellTerminalInstance;
+    var connId = webshellCurrentConn.id;
+    var sessionId = getActiveWebshellTerminalSessionId(connId);
+    var terminalKey = getWebshellTerminalSessionKey(connId, sessionId);
     term.writeln('');
-    pushWebshellHistory(webshellCurrentConn.id, cmd);
+    pushWebshellHistory(terminalKey, cmd);
+    appendWebshellTerminalLog(terminalKey, '\n$ ' + cmd + '\n');
     webshellRunning = true;
+    setWebshellTerminalStatus(true);
     execWebshellCommand(webshellCurrentConn, cmd).then(function (out) {
         var s = String(out || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         s.split('\n').forEach(function (line) { term.writeln(line.replace(/\r/g, '')); });
+        appendWebshellTerminalLog(terminalKey, s + '\n');
         term.write(WEBSHELL_PROMPT);
     }).catch(function (err) {
-        term.writeln('\x1b[31m' + (err && err.message ? err.message : wsT('webshell.execError')) + '\x1b[0m');
+        var em = (err && err.message ? err.message : wsT('webshell.execError'));
+        term.writeln('\x1b[31m' + em + '\x1b[0m');
+        appendWebshellTerminalLog(terminalKey, em + '\n');
         term.write(WEBSHELL_PROMPT);
-    }).finally(function () { webshellRunning = false; });
+    }).finally(function () {
+        webshellRunning = false;
+        setWebshellTerminalStatus(false);
+        renderWebshellTerminalSessions(webshellCurrentConn);
+    });
 }
 
 // ---------- 虚拟终端（xterm + 按行执行） ----------
@@ -2049,7 +2303,15 @@ function initWebshellTerminal(conn) {
     try {
         if (fitAddon) fitAddon.fit();
     } catch (e) {}
-    // 不再输出欢迎行，避免占用空间、挡住输入
+    setWebshellTerminalStatus(false);
+    var connId = conn && conn.id ? conn.id : '';
+    var sessionId = getActiveWebshellTerminalSessionId(connId);
+    var terminalKey = getWebshellTerminalSessionKey(connId, sessionId);
+    var cachedLog = getWebshellTerminalLog(terminalKey);
+    if (cachedLog) {
+        // xterm 恢复内容时统一使用 CRLF，避免切换窗口后出现“斜排”错位
+        term.write(String(cachedLog).replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n'));
+    }
     term.write(WEBSHELL_PROMPT);
 
     // 按行写入输出，与系统设置终端 writeOutput 一致，避免 ls 等输出错位
@@ -2073,11 +2335,29 @@ function initWebshellTerminal(conn) {
             webshellLineBuffer = '';
             webshellHistoryIndex = -1;
             term.write(WEBSHELL_PROMPT);
+            clearWebshellTerminalLog(terminalKey);
+            return;
+        }
+        // Ctrl+C：当前实现不支持远程中断，给出提示并回到提示符
+        if (data === '\x03') {
+            if (webshellTerminalRunning) {
+                writeWebshellOutput(term, '^C (当前版本暂不支持中断远程命令)', true);
+                appendWebshellTerminalLog(terminalKey, '^C (当前版本暂不支持中断远程命令)\n');
+            }
+            webshellLineBuffer = '';
+            webshellHistoryIndex = -1;
+            term.write(WEBSHELL_PROMPT);
+            return;
+        }
+        // Ctrl+U：清空当前输入行
+        if (data === '\x15') {
+            webshellLineBuffer = '';
+            term.write('\x1b[2K\r' + WEBSHELL_PROMPT);
             return;
         }
         // 上/下键：命令历史
         if (data === '\x1b[A' || data === '\x1bOA') {
-            var hist = getWebshellHistory(webshellCurrentConn ? webshellCurrentConn.id : '');
+            var hist = getWebshellHistory(terminalKey);
             if (hist.length === 0) return;
             webshellHistoryIndex = webshellHistoryIndex < 0 ? hist.length : Math.max(0, webshellHistoryIndex - 1);
             webshellLineBuffer = hist[webshellHistoryIndex] || '';
@@ -2085,7 +2365,7 @@ function initWebshellTerminal(conn) {
             return;
         }
         if (data === '\x1b[B' || data === '\x1bOB') {
-            var hist2 = getWebshellHistory(webshellCurrentConn ? webshellCurrentConn.id : '');
+            var hist2 = getWebshellHistory(terminalKey);
             if (hist2.length === 0) return;
             webshellHistoryIndex = webshellHistoryIndex < 0 ? -1 : Math.min(hist2.length - 1, webshellHistoryIndex + 1);
             if (webshellHistoryIndex < 0) webshellLineBuffer = '';
@@ -2102,18 +2382,31 @@ function initWebshellTerminal(conn) {
             if (cmd) {
                 if (webshellRunning) {
                     writeWebshellOutput(term, wsT('webshell.waitFinish'), true);
+                    appendWebshellTerminalLog(terminalKey, (wsT('webshell.waitFinish') || '请等待当前命令执行完成') + '\n');
                     term.write(WEBSHELL_PROMPT);
                     return;
                 }
-                pushWebshellHistory(webshellCurrentConn ? webshellCurrentConn.id : '', cmd);
+                pushWebshellHistory(terminalKey, cmd);
+                appendWebshellTerminalLog(terminalKey, '$ ' + cmd + '\n');
                 webshellRunning = true;
+                setWebshellTerminalStatus(true);
+                renderWebshellTerminalSessions(conn);
                 execWebshellCommand(webshellCurrentConn, cmd).then(function (out) {
                     webshellRunning = false;
-                    if (out && out.length) writeWebshellOutput(term, out, false);
+                    setWebshellTerminalStatus(false);
+                    renderWebshellTerminalSessions(conn);
+                    if (out && out.length) {
+                        writeWebshellOutput(term, out, false);
+                        appendWebshellTerminalLog(terminalKey, String(out).replace(/\r\n/g, '\n').replace(/\r/g, '\n') + '\n');
+                    }
                     term.write(WEBSHELL_PROMPT);
                 }).catch(function (err) {
                     webshellRunning = false;
-                    writeWebshellOutput(term, err && err.message ? err.message : wsT('webshell.execError'), true);
+                    setWebshellTerminalStatus(false);
+                    renderWebshellTerminalSessions(conn);
+                    var errMsg = err && err.message ? err.message : wsT('webshell.execError');
+                    writeWebshellOutput(term, errMsg, true);
+                    appendWebshellTerminalLog(terminalKey, String(errMsg || '') + '\n');
                     term.write(WEBSHELL_PROMPT);
                 });
             } else {
@@ -2134,15 +2427,27 @@ function initWebshellTerminal(conn) {
                     }
                     var line = lines[idx].trim();
                     if (!line) { runNext(idx + 1); return; }
-                    pushWebshellHistory(webshellCurrentConn.id, line);
+                    pushWebshellHistory(terminalKey, line);
+                    appendWebshellTerminalLog(terminalKey, '$ ' + line + '\n');
                     webshellRunning = true;
+                    setWebshellTerminalStatus(true);
+                    renderWebshellTerminalSessions(conn);
                     execWebshellCommand(webshellCurrentConn, line).then(function (out) {
-                        if (out && out.length) writeWebshellOutput(term, out, false);
+                        if (out && out.length) {
+                            writeWebshellOutput(term, out, false);
+                            appendWebshellTerminalLog(terminalKey, String(out).replace(/\r\n/g, '\n').replace(/\r/g, '\n') + '\n');
+                        }
                         webshellRunning = false;
+                        setWebshellTerminalStatus(false);
+                        renderWebshellTerminalSessions(conn);
                         runNext(idx + 1);
                     }).catch(function (err) {
-                        writeWebshellOutput(term, err && err.message ? err.message : wsT('webshell.execError'), true);
+                        var em = err && err.message ? err.message : wsT('webshell.execError');
+                        writeWebshellOutput(term, em, true);
+                        appendWebshellTerminalLog(terminalKey, String(em || '') + '\n');
                         webshellRunning = false;
+                        setWebshellTerminalStatus(false);
+                        renderWebshellTerminalSessions(conn);
                         runNext(idx + 1);
                     });
                 };
@@ -2178,6 +2483,7 @@ function initWebshellTerminal(conn) {
         });
         webshellTerminalResizeObserver.observe(container);
     }
+    renderWebshellTerminalSessions(conn);
 }
 
 // 调用后端执行命令
@@ -2851,6 +3157,21 @@ function deleteWebshell(id) {
     if (!confirm(wsT('webshell.deleteConfirm'))) return;
     if (currentWebshellId === id) destroyWebshellTerminal();
     if (currentWebshellId === id) currentWebshellId = null;
+    // 清理本地缓存（服务端会级联删除 SQLite 里的状态）
+    delete webshellPersistLoadedByConn[id];
+    if (webshellPersistSaveTimersByConn[id]) {
+        clearTimeout(webshellPersistSaveTimersByConn[id]);
+        delete webshellPersistSaveTimersByConn[id];
+    }
+    delete webshellTerminalSessionsByConn[id];
+    var dbStateKey = getWebshellDbStateStorageKey({ id: id });
+    if (dbStateKey) delete webshellDbConfigByConn[dbStateKey];
+    Object.keys(webshellTerminalLogsByConn).forEach(function (k) {
+        if (k === id || k.indexOf(id + '::') === 0) delete webshellTerminalLogsByConn[k];
+    });
+    Object.keys(webshellHistoryByConn).forEach(function (k) {
+        if (k === id || k.indexOf(id + '::') === 0) delete webshellHistoryByConn[k];
+    });
     if (typeof apiFetch === 'undefined') return;
     apiFetch('/api/webshell/connections/' + encodeURIComponent(id), { method: 'DELETE' })
         .then(function () {
@@ -2933,6 +3254,18 @@ function refreshWebshellUIOnLanguageChange() {
 
             var quickLabel = workspace.querySelector('.webshell-quick-label');
             if (quickLabel) quickLabel.textContent = (wsT('webshell.quickCommands') || '快捷命令') + ':';
+            var terminalClearBtn = document.getElementById('webshell-terminal-clear');
+            if (terminalClearBtn) {
+                terminalClearBtn.title = wsT('webshell.clearScreen') || '清屏';
+                terminalClearBtn.textContent = wsT('webshell.clearScreen') || '清屏';
+            }
+            var terminalCopyBtn = document.getElementById('webshell-terminal-copy-log');
+            if (terminalCopyBtn) {
+                terminalCopyBtn.title = wsT('webshell.copyTerminalLog') || '复制日志';
+                terminalCopyBtn.textContent = wsT('webshell.copyTerminalLog') || '复制日志';
+            }
+            setWebshellTerminalStatus(webshellTerminalRunning);
+            if (webshellCurrentConn) renderWebshellTerminalSessions(webshellCurrentConn);
             var pathLabel = workspace.querySelector('.webshell-file-toolbar label span');
             var listDirBtn = document.getElementById('webshell-list-dir');
             var parentDirBtn = document.getElementById('webshell-parent-dir');
