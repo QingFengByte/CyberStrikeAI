@@ -3028,6 +3028,9 @@ function parseWebshellListItems(rawOutput) {
     var items = [];
     for (var i = 0; i < lines.length; i++) {
         var line = lines[i];
+        var trimmedLine = String(line || '').trim();
+        // `ls -la` 首行常见 "total 12"（中文环境为 "总计 12"），不是文件项。
+        if (/^(total|总计)\s+\d+$/i.test(trimmedLine)) continue;
         var name = '';
         var isDir = false;
         var size = '';
