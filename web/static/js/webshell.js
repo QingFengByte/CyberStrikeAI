@@ -28,6 +28,8 @@ let webshellClearInProgress = false;
 // AI 助手：按连接 ID 保存对话 ID，便于多轮对话
 let webshellAiConvMap = {};
 let webshellAiSending = false;
+let webshellAiAbortController = null; // AbortController for current AI stream
+let webshellAiStreamReader = null;    // Current ReadableStreamDefaultReader
 let webshellDbConfigByConn = {};
 let webshellDirTreeByConn = {};
 let webshellDirExpandedByConn = {};
@@ -68,6 +70,237 @@ function resolveWebshellAiStreamRequest() {
     }).catch(function () {
         return { path: '/api/agent-loop/stream', orchestration: null };
     });
+}
+
+// ─── WebShell AI 助手：角色 + 对话模式选择器（与主「对话」页对齐） ───
+
+let wsRolesCache = null; // 缓存 /api/roles 结果
+
+function wsLoadRoles() {
+    if (typeof apiFetch === 'undefined') return;
+    apiFetch('/api/roles').then(function (r) { return r.json(); }).then(function (data) {
+        wsRolesCache = (data && Array.isArray(data.roles)) ? data.roles : [];
+        wsRenderRoleList();
+        wsUpdateRoleSelectorDisplay();
+    }).catch(function () { /* ignore */ });
+}
+
+function wsUpdateRoleSelectorDisplay() {
+    var iconEl = document.getElementById('ws-role-selector-icon');
+    var textEl = document.getElementById('ws-role-selector-text');
+    if (!iconEl || !textEl) return;
+    var cur = (typeof getCurrentRole === 'function') ? getCurrentRole() : (localStorage.getItem('currentRole') || '');
+    if (!cur) {
+        iconEl.textContent = '\ud83d\udd35';
+        textEl.textContent = (typeof window.t === 'function' ? window.t('chat.defaultRole') : '') || '默认';
+        return;
+    }
+    if (wsRolesCache) {
+        for (var i = 0; i < wsRolesCache.length; i++) {
+            if (wsRolesCache[i].name === cur) {
+                iconEl.textContent = wsRolesCache[i].icon || '\ud83d\udd35';
+                textEl.textContent = cur;
+                return;
+            }
+        }
+    }
+    iconEl.textContent = '\ud83d\udd35';
+    textEl.textContent = cur;
+}
+
+function wsRenderRoleList() {
+    var listEl = document.getElementById('ws-role-selection-list');
+    if (!listEl) return;
+    var cur = (typeof getCurrentRole === 'function') ? getCurrentRole() : (localStorage.getItem('currentRole') || '');
+    var html = '';
+    // 默认角色
+    var defSelected = !cur ? ' selected' : '';
+    html += '<button type="button" class="role-selection-item-main' + defSelected + '" onclick="wsSelectRole(\'\')">' +
+        '<div class="role-selection-item-icon-main">\ud83d\udd35</div>' +
+        '<div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' +
+        (wsTOr('chat.defaultRole', '默认')) +
+        '</div><div class="role-selection-item-description-main">' +
+        (wsTOr('roles.defaultRoleDescription', '默认角色，不额外携带用户提示词，使用所有工具')) +
+        '</div></div>' +
+        (defSelected ? '<div class="role-selection-checkmark-main">\u2713</div>' : '') +
+        '</button>';
+    if (wsRolesCache) {
+        for (var i = 0; i < wsRolesCache.length; i++) {
+            var r = wsRolesCache[i];
+            if (!r.enabled) continue;
+            if (r.name === '默认') continue; // 已在上方硬编码默认角色，跳过 API 返回的默认项
+            var sel = (r.name === cur) ? ' selected' : '';
+            html += '<button type="button" class="role-selection-item-main' + sel + '" onclick="wsSelectRole(\'' + r.name.replace(/'/g, "\\'") + '\')">' +
+                '<div class="role-selection-item-icon-main">' + (r.icon || '\ud83d\udd35') + '</div>' +
+                '<div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + r.name + '</div>' +
+                '<div class="role-selection-item-description-main">' + (r.description || '').substring(0, 60) + '</div></div>' +
+                (sel ? '<div class="role-selection-checkmark-main">\u2713</div>' : '') +
+                '</button>';
+        }
+    }
+    listEl.innerHTML = html;
+}
+
+function wsSelectRole(name) {
+    var roleName = name || '';
+    // 使用主页的 handleRoleChange 来同步 roles.js 内部状态和 localStorage
+    if (typeof handleRoleChange === 'function') {
+        try { handleRoleChange(roleName); } catch (e) { /* */ }
+    } else {
+        try { localStorage.setItem('currentRole', roleName); } catch (e) { /* */ }
+    }
+    if (typeof window.currentSelectedRole !== 'undefined') window.currentSelectedRole = roleName;
+    wsUpdateRoleSelectorDisplay();
+    wsRenderRoleList();
+    wsCloseRolePanel();
+}
+
+function wsToggleRolePanel() {
+    var panel = document.getElementById('ws-role-selection-panel');
+    if (!panel) return;
+    var isOpen = panel.style.display === 'flex';
+    if (isOpen) { wsCloseRolePanel(); return; }
+    wsCloseAgentModePanel();
+    panel.style.display = 'flex';
+}
+function wsCloseRolePanel() {
+    var panel = document.getElementById('ws-role-selection-panel');
+    if (panel) panel.style.display = 'none';
+}
+
+// ─── 对话模式选择器 ───
+
+function wsInitAgentMode() {
+    if (typeof apiFetch === 'undefined') return;
+    apiFetch('/api/config').then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {
+        var wrapper = document.getElementById('ws-agent-mode-wrapper');
+        if (!wrapper) return;
+        wrapper.style.display = '';
+        // 是否启用多代理
+        var multiOn = cfg && cfg.multi_agent && cfg.multi_agent.enabled;
+        // 隐藏/显示多代理选项
+        var opts = wrapper.querySelectorAll('.ws-agent-mode-option');
+        opts.forEach(function (el) {
+            var v = el.getAttribute('data-value');
+            if (v === 'deep' || v === 'plan_execute' || v === 'supervisor') {
+                el.style.display = multiOn ? '' : 'none';
+            }
+        });
+        // 标准化当前值
+        var stored = localStorage.getItem('cyberstrike-chat-agent-mode');
+        var norm;
+        if (typeof window.csaiChatAgentMode === 'object' && typeof window.csaiChatAgentMode.normalizeStored === 'function') {
+            norm = window.csaiChatAgentMode.normalizeStored(stored, cfg);
+        } else {
+            norm = stored || 'react';
+            if (norm === 'single') norm = 'react';
+            if (norm === 'multi') norm = 'deep';
+        }
+        wsSyncAgentMode(norm);
+    }).catch(function () {
+        var wrapper = document.getElementById('ws-agent-mode-wrapper');
+        if (wrapper) wrapper.style.display = '';
+        wsSyncAgentMode('react');
+    });
+}
+
+function wsSyncAgentMode(value) {
+    var hid = document.getElementById('ws-agent-mode-select');
+    var label = document.getElementById('ws-agent-mode-text');
+    var icon = document.getElementById('ws-agent-mode-icon');
+    if (hid) hid.value = value;
+    if (label) label.textContent = (typeof getAgentModeLabelForValue === 'function') ? getAgentModeLabelForValue(value) : value;
+    if (icon) icon.textContent = (typeof getAgentModeIconForValue === 'function') ? getAgentModeIconForValue(value) : '\ud83e\udd16';
+    var wrapper = document.getElementById('ws-agent-mode-wrapper');
+    if (wrapper) {
+        wrapper.querySelectorAll('.ws-agent-mode-option').forEach(function (el) {
+            el.classList.toggle('selected', el.getAttribute('data-value') === value);
+        });
+    }
+}
+
+function wsSelectAgentMode(mode) {
+    try { localStorage.setItem('cyberstrike-chat-agent-mode', mode); } catch (e) { /* */ }
+    wsSyncAgentMode(mode);
+    wsCloseAgentModePanel();
+    // 同步主页模式选择器
+    if (typeof syncAgentModeFromValue === 'function') try { syncAgentModeFromValue(mode); } catch (e) { /* */ }
+}
+
+function wsToggleAgentModePanel() {
+    var panel = document.getElementById('ws-agent-mode-panel');
+    if (!panel) return;
+    var isOpen = panel.style.display === 'flex';
+    if (isOpen) { wsCloseAgentModePanel(); return; }
+    wsCloseRolePanel();
+    panel.style.display = 'flex';
+}
+function wsCloseAgentModePanel() {
+    var panel = document.getElementById('ws-agent-mode-panel');
+    if (panel) panel.style.display = 'none';
+}
+
+/** 当 WebShell AI Tab 可见时刷新选择器显示（同步主页可能的更改） */
+function wsRefreshSelectors() {
+    wsUpdateRoleSelectorDisplay();
+    wsRenderRoleList();
+    var stored = localStorage.getItem('cyberstrike-chat-agent-mode') || 'react';
+    wsSyncAgentMode(stored);
+}
+
+// 点击面板外部关闭
+document.addEventListener('click', function (e) {
+    var rolePanel = document.getElementById('ws-role-selection-panel');
+    var roleBtn = document.getElementById('ws-role-selector-btn');
+    if (rolePanel && rolePanel.style.display !== 'none' && roleBtn && !rolePanel.contains(e.target) && !roleBtn.contains(e.target)) {
+        wsCloseRolePanel();
+    }
+    var modePanel = document.getElementById('ws-agent-mode-panel');
+    var modeBtn = document.getElementById('ws-agent-mode-btn');
+    if (modePanel && modePanel.style.display !== 'none' && modeBtn && !modePanel.contains(e.target) && !modeBtn.contains(e.target)) {
+        wsCloseAgentModePanel();
+    }
+});
+
+// ─── end WebShell AI 选择器 ───
+
+/** 停止当前 WebShell AI 流式请求 */
+function wsStopAiStream(conn) {
+    // 1. Abort the fetch
+    if (webshellAiAbortController) {
+        try { webshellAiAbortController.abort(); } catch (e) { /* */ }
+        webshellAiAbortController = null;
+    }
+    // 2. Cancel the reader
+    if (webshellAiStreamReader) {
+        try { webshellAiStreamReader.cancel(); } catch (e) { /* */ }
+        webshellAiStreamReader = null;
+    }
+    // 3. Call backend cancel API if we have a conversation
+    var convId = conn && conn.id ? (webshellAiConvMap[conn.id] || '') : '';
+    if (convId && typeof apiFetch === 'function') {
+        apiFetch('/api/agent-loop/cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversationId: convId })
+        }).catch(function () { /* ignore */ });
+    }
+    // 4. Reset UI state
+    wsSetAiSendingState(false);
+}
+
+/** 切换发送/停止按钮状态 */
+function wsSetAiSendingState(sending) {
+    webshellAiSending = sending;
+    var sendBtn = document.getElementById('webshell-ai-send');
+    var stopBtn = document.getElementById('webshell-ai-stop');
+    if (sendBtn) {
+        sendBtn.disabled = sending;
+        sendBtn.style.display = sending ? 'none' : '';
+    }
+    if (stopBtn) {
+        stopBtn.style.display = sending ? '' : 'none';
+    }
 }
 
 // 从服务端（SQLite）拉取连接列表
@@ -1441,7 +1674,7 @@ function webshellAiConvListSelect(conn, convId, messagesContainer, listEl) {
         el.classList.toggle('active', el.dataset.convId === convId);
     });
     if (typeof apiFetch !== 'function') return;
-    apiFetch('/api/conversations/' + encodeURIComponent(convId), { method: 'GET' })
+    apiFetch('/api/conversations/' + encodeURIComponent(convId) + '?include_process_details=1', { method: 'GET' })
         .then(function (r) { return r.json(); })
         .then(function (data) {
             messagesContainer.innerHTML = '';
@@ -1572,9 +1805,45 @@ function selectWebshell(id, stateReady) {
         '</div>' +
         '<div class="webshell-ai-main">' +
         '<div id="webshell-ai-messages" class="webshell-ai-messages"></div>' +
+        '<div class="webshell-ai-input-area">' +
+        '<div class="webshell-ai-selectors-row">' +
+        '<div class="ws-role-selector-wrapper">' +
+        '<button type="button" class="role-selector-btn ws-role-selector-btn" id="ws-role-selector-btn" onclick="wsToggleRolePanel()">' +
+        '<span id="ws-role-selector-icon" class="role-selector-icon">\ud83d\udd35</span>' +
+        '<span id="ws-role-selector-text" class="role-selector-text">' + (wsT('chat.defaultRole') || '默认') + '</span>' +
+        '<svg class="role-selector-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+        '</button>' +
+        '<div id="ws-role-selection-panel" class="role-selection-panel" style="display:none;">' +
+        '<div class="role-selection-panel-header"><h3 class="role-selection-panel-title">' + (wsT('chatGroup.rolePanelTitle') || '选择角色') + '</h3>' +
+        '<button type="button" class="role-selection-panel-close" onclick="wsCloseRolePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
+        '</div><div id="ws-role-selection-list" class="role-selection-list-main"></div></div>' +
+        '</div>' +
+        '<div class="ws-agent-mode-wrapper" id="ws-agent-mode-wrapper" style="display:none;">' +
+        '<div class="agent-mode-inner">' +
+        '<button type="button" class="role-selector-btn agent-mode-btn" id="ws-agent-mode-btn" onclick="wsToggleAgentModePanel()">' +
+        '<span id="ws-agent-mode-icon" class="role-selector-icon">\ud83e\udd16</span>' +
+        '<span id="ws-agent-mode-text" class="role-selector-text">' + (wsT('chat.agentModeReactNative') || '原生 ReAct') + '</span>' +
+        '<svg class="role-selector-arrow" width="10" height="10" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+        '</button>' +
+        '<div id="ws-agent-mode-panel" class="agent-mode-panel" style="display:none;" role="listbox">' +
+        '<div class="role-selection-panel-header agent-mode-panel-header"><h3 class="role-selection-panel-title">' + (wsT('chat.agentModePanelTitle') || '对话模式') + '</h3>' +
+        '<button type="button" class="role-selection-panel-close" onclick="wsCloseAgentModePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
+        '</div>' +
+        '<div class="agent-mode-options">' +
+        '<button type="button" class="role-selection-item-main agent-mode-option ws-agent-mode-option" data-value="react" role="option" onclick="wsSelectAgentMode(\'react\')"><div class="role-selection-item-icon-main">\ud83e\udd16</div><div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + (wsT('chat.agentModeReactNative') || '原生 ReAct 模式') + '</div><div class="role-selection-item-description-main">' + (wsT('chat.agentModeReactNativeHint') || '经典单代理 ReAct 与 MCP 工具') + '</div></div><div class="role-selection-checkmark-main agent-mode-check" data-agent-mode-check="react">\u2713</div></button>' +
+        '<button type="button" class="role-selection-item-main agent-mode-option ws-agent-mode-option" data-value="eino_single" role="option" onclick="wsSelectAgentMode(\'eino_single\')"><div class="role-selection-item-icon-main">\u26a1</div><div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + (wsT('chat.agentModeEinoSingle') || 'Eino 单代理（ADK）') + '</div><div class="role-selection-item-description-main">' + (wsT('chat.agentModeEinoSingleHint') || 'Eino ChatModelAgent + Runner') + '</div></div><div class="role-selection-checkmark-main agent-mode-check" data-agent-mode-check="eino_single">\u2713</div></button>' +
+        '<button type="button" class="role-selection-item-main agent-mode-option ws-agent-mode-option" data-value="deep" role="option" onclick="wsSelectAgentMode(\'deep\')"><div class="role-selection-item-icon-main">\ud83e\udde9</div><div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + (wsT('chat.agentModeDeep') || 'Deep（DeepAgent）') + '</div><div class="role-selection-item-description-main">' + (wsT('chat.agentModeDeepHint') || 'Eino DeepAgent，task 调度子代理') + '</div></div><div class="role-selection-checkmark-main agent-mode-check" data-agent-mode-check="deep">\u2713</div></button>' +
+        '<button type="button" class="role-selection-item-main agent-mode-option ws-agent-mode-option" data-value="plan_execute" role="option" onclick="wsSelectAgentMode(\'plan_execute\')"><div class="role-selection-item-icon-main">\ud83d\udccb</div><div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + (wsT('chat.agentModePlanExecuteLabel') || 'Plan-Execute') + '</div><div class="role-selection-item-description-main">' + (wsT('chat.agentModePlanExecuteHint') || '规划 → 执行 → 重规划') + '</div></div><div class="role-selection-checkmark-main agent-mode-check" data-agent-mode-check="plan_execute">\u2713</div></button>' +
+        '<button type="button" class="role-selection-item-main agent-mode-option ws-agent-mode-option" data-value="supervisor" role="option" onclick="wsSelectAgentMode(\'supervisor\')"><div class="role-selection-item-icon-main">\ud83c\udfaf</div><div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + (wsT('chat.agentModeSupervisorLabel') || 'Supervisor') + '</div><div class="role-selection-item-description-main">' + (wsT('chat.agentModeSupervisorHint') || '监督者协调，transfer 委派子代理') + '</div></div><div class="role-selection-checkmark-main agent-mode-check" data-agent-mode-check="supervisor">\u2713</div></button>' +
+        '</div></div></div>' +
+        '<input type="hidden" id="ws-agent-mode-select" value="react" autocomplete="off" />' +
+        '</div>' +
+        '</div>' +
         '<div class="webshell-ai-input-row">' +
         '<textarea id="webshell-ai-input" class="webshell-ai-input form-control" rows="2" placeholder="' + (wsT('webshell.aiPlaceholder') || '例如：列出当前目录下的文件') + '"></textarea>' +
         '<button type="button" class="btn-primary" id="webshell-ai-send">' + (wsT('webshell.aiSend') || '发送') + '</button>' +
+        '<button type="button" class="btn-danger webshell-ai-stop-btn" id="webshell-ai-stop" style="display:none;">' + wsTOr('webshell.aiStop', '停止') + '</button>' +
+        '</div>' +
         '</div>' +
         '</div>' +
         '</div>' +
@@ -1634,6 +1903,9 @@ function selectWebshell(id, stateReady) {
             if (pane) pane.classList.add('active');
             if (tab === 'terminal' && webshellTerminalInstance && webshellTerminalFitAddon) {
                 try { webshellTerminalFitAddon.fit(); } catch (e) {}
+            }
+            if (tab === 'ai') {
+                try { wsRefreshSelectors(); } catch (e) {}
             }
         });
     });
@@ -1710,6 +1982,10 @@ function selectWebshell(id, stateReady) {
     var aiMessages = document.getElementById('webshell-ai-messages');
     var aiNewConvBtn = document.getElementById('webshell-ai-new-conv');
     var aiConvListEl = document.getElementById('webshell-ai-conv-list');
+
+    // 初始化角色 + 模式选择器
+    wsLoadRoles();
+    wsInitAgentMode();
     var aiMemoInput = document.getElementById('webshell-ai-memo-input');
     var aiMemoStatus = document.getElementById('webshell-ai-memo-status');
     var aiMemoClearBtn = document.getElementById('webshell-ai-memo-clear');
@@ -1770,7 +2046,11 @@ function selectWebshell(id, stateReady) {
         });
     }
     if (aiSendBtn && aiInput && aiMessages) {
+        var aiStopBtn = document.getElementById('webshell-ai-stop');
         aiSendBtn.addEventListener('click', function () { runWebshellAiSend(conn, aiInput, aiSendBtn, aiMessages); });
+        if (aiStopBtn) {
+            aiStopBtn.addEventListener('click', function () { wsStopAiStream(conn); });
+        }
         aiInput.addEventListener('keydown', function (e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -2347,8 +2627,8 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
         return;
     }
 
-    webshellAiSending = true;
-    if (sendBtn) sendBtn.disabled = true;
+    webshellAiAbortController = new AbortController();
+    wsSetAiSendingState(true);
 
     var userDiv = document.createElement('div');
     userDiv.className = 'webshell-ai-msg user';
@@ -2427,14 +2707,18 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
     }
 
     var einoSubReplyStreams = new Map();
+    var wsThinkingStreams = new Map();        // streamId → { el, buf }
+    var wsToolResultStreams = new Map();      // toolCallId → { el, buf }
 
     if (inputEl) inputEl.value = '';
 
     var convId = webshellAiConvMap[conn.id] || '';
+    var wsRole = (typeof getCurrentRole === 'function') ? getCurrentRole() : (localStorage.getItem('currentRole') || '');
     var body = {
         message: message,
         webshellConnectionId: conn.id,
-        conversationId: convId
+        conversationId: convId,
+        role: wsRole
     };
 
     // 流式输出：支持 progress 实时更新、response 打字机效果；若后端发送多段 response 则追加
@@ -2448,7 +2732,8 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
         return apiFetch(info.path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify(body),
+            signal: webshellAiAbortController ? webshellAiAbortController.signal : undefined
         });
     }).then(function (response) {
         if (!response.ok) {
@@ -2458,6 +2743,7 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
         return response.body.getReader();
     }).then(function (reader) {
         if (!reader) return;
+        webshellAiStreamReader = reader;
         var decoder = new TextDecoder();
         var buffer = '';
         return reader.read().then(function processChunk(result) {
@@ -2470,9 +2756,12 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
                 if (line.indexOf('data: ') !== 0) continue;
                 try {
                     var eventData = JSON.parse(line.slice(6));
-                    if (eventData.type === 'conversation' && eventData.data && eventData.data.conversationId) {
-                        // 先把 conversationId 拿出来，避免后续异步回调里 eventData 被后续事件覆盖导致 undefined 报错
-                        var convId = eventData.data.conversationId;
+                    var _et = eventData.type;
+                    var _ed = eventData.data || {};
+                    var _em = eventData.message || '';
+
+                    if (_et === 'conversation' && _ed.conversationId) {
+                        var convId = _ed.conversationId;
                         webshellAiConvMap[conn.id] = convId;
                         var listEl = document.getElementById('webshell-ai-conv-list');
                         if (listEl) fetchAndRenderWebshellAiConvList(conn, listEl).then(function () {
@@ -2480,100 +2769,219 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
                                 el.classList.toggle('active', el.dataset.convId === convId);
                             });
                         });
-                    } else if (eventData.type === 'response_start') {
+
+                    // ─── Response streaming ───
+                    } else if (_et === 'response_start') {
                         streamingTarget = '';
                         webshellStreamingTypingId += 1;
                         streamingTypingId = webshellStreamingTypingId;
                         assistantDiv.textContent = '…';
                         messagesContainer.scrollTop = messagesContainer.scrollHeight;
-                    } else if (eventData.type === 'response_delta') {
-                        var deltaText = (eventData.message != null && eventData.message !== '') ? String(eventData.message) : '';
+                    } else if (_et === 'response_delta') {
+                        var deltaText = (_em != null && _em !== '') ? String(_em) : '';
                         if (deltaText) {
                             streamingTarget += deltaText;
                             webshellStreamingTypingId += 1;
                             streamingTypingId = webshellStreamingTypingId;
                             runWebshellAiStreamingTyping(assistantDiv, streamingTarget, streamingTypingId, messagesContainer);
                         }
-                    } else if (eventData.type === 'response') {
-                        var text = (eventData.message != null && eventData.message !== '') ? eventData.message : (eventData.data && typeof eventData.data === 'string' ? eventData.data : '');
+                    } else if (_et === 'response') {
+                        var text = (_em != null && _em !== '') ? _em : (typeof _ed === 'string' ? _ed : '');
                         if (text) {
-                            // response 为最终完整内容：避免与增量重复拼接
                             streamingTarget = String(text);
                             webshellStreamingTypingId += 1;
                             streamingTypingId = webshellStreamingTypingId;
                             runWebshellAiStreamingTyping(assistantDiv, streamingTarget, streamingTypingId, messagesContainer);
                         }
-                    } else if (eventData.type === 'error' && eventData.message) {
+
+                    // ─── Terminal events ───
+                    } else if (_et === 'error' && _em) {
                         streamingTypingId += 1;
-                        var errLabel = (typeof window.t === 'function') ? window.t('chat.error') : '错误';
-                        appendTimelineItem('error', '❌ ' + errLabel, eventData.message, eventData.data);
-                        renderWebshellAiErrorMessage(assistantDiv, errLabel + ': ' + eventData.message);
-                    } else if (eventData.type === 'progress' && eventData.message) {
+                        var errLabel = wsTOr('chat.error', '错误');
+                        appendTimelineItem('error', '❌ ' + errLabel, _em, _ed);
+                        renderWebshellAiErrorMessage(assistantDiv, errLabel + ': ' + _em);
+                    } else if (_et === 'cancelled') {
+                        streamingTypingId += 1;
+                        var cancelLabel = wsTOr('chat.taskCancelled', '任务已取消');
+                        appendTimelineItem('cancelled', '⛔ ' + cancelLabel, _em, _ed);
+                        if (!streamingTarget && !assistantDiv.dataset.hasContent) {
+                            assistantDiv.textContent = cancelLabel;
+                        }
+                    } else if (_et === 'done') {
+                        // 清理流式状态
+                        wsThinkingStreams.clear();
+                        wsToolResultStreams.clear();
+                        einoSubReplyStreams.clear();
+
+                    // ─── Iteration / Progress ───
+                    } else if (_et === 'progress' && _em) {
                         var progressMsg = (typeof window.translateProgressMessage === 'function')
-                            ? window.translateProgressMessage(eventData.message)
-                            : eventData.message;
-                        appendTimelineItem('progress', '🔍 ' + progressMsg, '', eventData.data);
+                            ? window.translateProgressMessage(_em) : _em;
+                        appendTimelineItem('progress', '🔍 ' + progressMsg, '', _ed);
                         if (!streamingTarget) assistantDiv.textContent = '…';
-                    } else if (eventData.type === 'iteration') {
-                        var iterN = (eventData.data && eventData.data.iteration) || 0;
-                        var iterTitle = (typeof window.t === 'function')
-                            ? window.t('chat.iterationRound', { n: iterN || 1 })
-                            : (iterN ? ('第 ' + iterN + ' 轮迭代') : (eventData.message || '迭代'));
-                        var iterMessage = eventData.message || '';
+                    } else if (_et === 'iteration') {
+                        var iterN = _ed.iteration || 0;
+                        var iterTitle = wsTOr('chat.iterationRound', '') || (iterN ? ('第 ' + iterN + ' 轮迭代') : (_em || '迭代'));
+                        if (typeof window.t === 'function' && iterN) {
+                            iterTitle = window.t('chat.iterationRound', { n: iterN });
+                        }
+                        var iterMessage = _em || '';
                         if (iterMessage && typeof window.translateProgressMessage === 'function') {
                             iterMessage = window.translateProgressMessage(iterMessage);
                         }
-                        appendTimelineItem('iteration', '🔍 ' + iterTitle, iterMessage, eventData.data);
+                        appendTimelineItem('iteration', '🔍 ' + iterTitle, iterMessage, _ed);
                         if (!streamingTarget) assistantDiv.textContent = '…';
-                    } else if (eventData.type === 'thinking' && eventData.message) {
-                        var thinkLabel = (typeof window.t === 'function') ? window.t('chat.aiThinking') : 'AI 思考';
-                        var thinkD = eventData.data || {};
-                        appendTimelineItem('thinking', webshellAgentPx(thinkD) + '🤔 ' + thinkLabel, eventData.message, thinkD);
+
+                    // ─── Thinking (non-stream + stream) ───
+                    } else if (_et === 'thinking_stream_start' && _ed.streamId) {
+                        var thinkSLabel = wsTOr('chat.aiThinking', 'AI 思考');
+                        var thinkSItem = document.createElement('div');
+                        thinkSItem.className = 'webshell-ai-timeline-item webshell-ai-timeline-thinking';
+                        thinkSItem.innerHTML = '<span class="webshell-ai-timeline-title">' + escapeHtml(webshellAgentPx(_ed) + '🤔 ' + thinkSLabel) + '</span>';
+                        var thinkSPre = document.createElement('div');
+                        thinkSPre.className = 'webshell-ai-timeline-msg webshell-thinking-stream-body';
+                        thinkSItem.appendChild(thinkSPre);
+                        timelineContainer.appendChild(thinkSItem);
+                        timelineContainer.classList.add('has-items');
+                        wsThinkingStreams.set(_ed.streamId, { el: thinkSItem, body: thinkSPre, buf: '' });
                         if (!streamingTarget) assistantDiv.textContent = '…';
-                    } else if (eventData.type === 'tool_calls_detected' && eventData.data) {
-                        var count = eventData.data.count || 0;
-                        var detectedLabel = (typeof window.t === 'function')
-                            ? window.t('chat.toolCallsDetected', { count: count })
-                            : ('检测到 ' + count + ' 个工具调用');
-                        appendTimelineItem('tool_calls_detected', webshellAgentPx(eventData.data) + '🔧 ' + detectedLabel, eventData.message || '', eventData.data);
+                    } else if (_et === 'thinking_stream_delta' && _ed.streamId) {
+                        var tsD = wsThinkingStreams.get(_ed.streamId);
+                        if (tsD) {
+                            tsD.buf += (_em || '');
+                            if (typeof formatMarkdown === 'function') {
+                                tsD.body.innerHTML = formatMarkdown(tsD.buf);
+                            } else {
+                                tsD.body.textContent = tsD.buf;
+                            }
+                        }
                         if (!streamingTarget) assistantDiv.textContent = '…';
-                    } else if (eventData.type === 'tool_call' && eventData.data) {
-                        var d = eventData.data;
-                        var tn = d.toolName || '未知工具';
-                        var idx = d.index || 0;
-                        var total = d.total || 0;
-                        var callTitle = (typeof window.t === 'function')
-                            ? window.t('chat.callTool', { name: tn, index: idx, total: total })
-                            : ('调用: ' + tn + (total ? ' (' + idx + '/' + total + ')' : ''));
-                        var title = webshellAgentPx(d) + '🔧 ' + callTitle;
-                        appendTimelineItem('tool_call', title, eventData.message || '', eventData.data);
+                    } else if (_et === 'thinking_stream_end' && _ed.streamId) {
+                        var tsE = wsThinkingStreams.get(_ed.streamId);
+                        if (tsE) {
+                            var fullThink = (_em != null && _em !== '') ? String(_em) : tsE.buf;
+                            if (typeof formatMarkdown === 'function') {
+                                tsE.body.innerHTML = formatMarkdown(fullThink);
+                            } else {
+                                tsE.body.textContent = fullThink;
+                            }
+                            wsThinkingStreams.delete(_ed.streamId);
+                        }
+                    } else if (_et === 'thinking' && _em) {
+                        // 如果有 streamId 且已存在流式条目，跳过避免重复
+                        if (_ed.streamId && wsThinkingStreams.has(_ed.streamId)) {
+                            // 已由 thinking_stream_* 处理
+                        } else {
+                            var thinkLabel = wsTOr('chat.aiThinking', 'AI 思考');
+                            appendTimelineItem('thinking', webshellAgentPx(_ed) + '🤔 ' + thinkLabel, _em, _ed);
+                        }
                         if (!streamingTarget) assistantDiv.textContent = '…';
-                    } else if (eventData.type === 'tool_result' && eventData.data) {
-                        var dr = eventData.data;
-                        var success = dr.success !== false;
-                        var tname = dr.toolName || '工具';
-                        var titleText = (typeof window.t === 'function')
-                            ? (success ? window.t('chat.toolExecComplete', { name: tname }) : window.t('chat.toolExecFailed', { name: tname }))
-                            : (tname + (success ? ' 执行完成' : ' 执行失败'));
-                        var title = webshellAgentPx(dr) + (success ? '✅ ' : '❌ ') + titleText;
-                        var sub = eventData.message || (dr.result ? String(dr.result).slice(0, 300) : '');
-                        appendTimelineItem('tool_result', title, sub, eventData.data);
+
+                    // ─── Warning ───
+                    } else if (_et === 'warning') {
+                        appendTimelineItem('warning', '⚠️ ' + (_em || ''), '', _ed);
+
+                    // ─── Eino recovery ───
+                    } else if (_et === 'eino_recovery') {
+                        var runIdx = _ed.runIndex != null ? _ed.runIndex : (_ed.einoRetry != null ? _ed.einoRetry + 1 : 1);
+                        var maxRuns = _ed.maxRuns != null ? _ed.maxRuns : 3;
+                        var recTitle = wsTOr('chat.einoRecoveryTitle', '') ||
+                            ('🔄 工具参数无效 · 第 ' + runIdx + '/' + maxRuns + ' 轮（已追加提示）');
+                        if (typeof window.t === 'function') {
+                            try { recTitle = window.t('chat.einoRecoveryTitle', { n: runIdx, max: maxRuns }); } catch (e) { /* */ }
+                        }
+                        appendTimelineItem('eino_recovery', recTitle, _em, _ed);
+
+                    // ─── Tool calls ───
+                    } else if (_et === 'tool_calls_detected' && _ed) {
+                        var count = _ed.count || 0;
+                        var detectedLabel = wsTOr('chat.toolCallsDetected', '') || ('检测到 ' + count + ' 个工具调用');
+                        if (typeof window.t === 'function') {
+                            try { detectedLabel = window.t('chat.toolCallsDetected', { count: count }); } catch (e) { /* */ }
+                        }
+                        appendTimelineItem('tool_calls_detected', webshellAgentPx(_ed) + '🔧 ' + detectedLabel, _em || '', _ed);
                         if (!streamingTarget) assistantDiv.textContent = '…';
-                    } else if (eventData.type === 'eino_agent_reply_stream_start' && eventData.data && eventData.data.streamId) {
-                        var rdS = eventData.data;
-                        var repTS = (typeof window.t === 'function') ? window.t('chat.einoAgentReplyTitle') : '子代理回复';
-                        var runTS = (typeof window.t === 'function') ? window.t('timeline.running') : '执行中...';
+                    } else if (_et === 'tool_call' && _ed) {
+                        var tn = _ed.toolName || '未知工具';
+                        var idx = _ed.index || 0;
+                        var total = _ed.total || 0;
+                        var callTitle = wsTOr('chat.callTool', '') || ('调用工具: ' + tn + (total ? ' (' + idx + '/' + total + ')' : ''));
+                        if (typeof window.t === 'function') {
+                            try { callTitle = window.t('chat.callTool', { name: tn, index: idx, total: total }); } catch (e) { /* */ }
+                        }
+                        appendTimelineItem('tool_call', webshellAgentPx(_ed) + '🔧 ' + callTitle, _em || '', _ed);
+                        if (!streamingTarget) assistantDiv.textContent = '…';
+
+                    // ─── Tool result delta (streaming output) ───
+                    } else if (_et === 'tool_result_delta' && _ed.toolCallId) {
+                        var trdKey = _ed.toolCallId;
+                        var trdDelta = _em || '';
+                        if (trdDelta) {
+                            var trdState = wsToolResultStreams.get(trdKey);
+                            if (!trdState) {
+                                var trdName = _ed.toolName || '工具';
+                                var runLabel = wsTOr('timeline.running', '执行中...');
+                                var trdItem = document.createElement('div');
+                                trdItem.className = 'webshell-ai-timeline-item webshell-ai-timeline-tool_result';
+                                trdItem.innerHTML = '<span class="webshell-ai-timeline-title">' +
+                                    escapeHtml(webshellAgentPx(_ed) + '⏳ ' + runLabel + ' ' + trdName) +
+                                    '</span><div class="webshell-ai-timeline-msg"><div class="tool-result-section success">' +
+                                    '<pre class="tool-result"></pre></div></div>';
+                                timelineContainer.appendChild(trdItem);
+                                timelineContainer.classList.add('has-items');
+                                trdState = { el: trdItem, buf: '' };
+                                wsToolResultStreams.set(trdKey, trdState);
+                            }
+                            trdState.buf += trdDelta;
+                            var trdPre = trdState.el.querySelector('pre.tool-result');
+                            if (trdPre) trdPre.textContent = trdState.buf;
+                        }
+                        if (!streamingTarget) assistantDiv.textContent = '…';
+
+                    // ─── Tool result (final) ───
+                    } else if (_et === 'tool_result' && _ed) {
+                        var success = _ed.success !== false;
+                        var tname = _ed.toolName || '工具';
+                        var titleText = wsTOr(success ? 'chat.toolExecComplete' : 'chat.toolExecFailed', '') ||
+                            (tname + (success ? ' 执行完成' : ' 执行失败'));
+                        if (typeof window.t === 'function') {
+                            try { titleText = window.t(success ? 'chat.toolExecComplete' : 'chat.toolExecFailed', { name: tname }); } catch (e) { /* */ }
+                        }
+                        // 如果有流式占位条目，更新标题
+                        var trdExist = _ed.toolCallId ? wsToolResultStreams.get(_ed.toolCallId) : null;
+                        if (trdExist) {
+                            var trdTitleEl = trdExist.el.querySelector('.webshell-ai-timeline-title');
+                            if (trdTitleEl) trdTitleEl.textContent = webshellAgentPx(_ed) + (success ? '✅ ' : '❌ ') + titleText;
+                            // 更新结果内容
+                            var resultText = _ed.result ? String(_ed.result) : (_em || '');
+                            var trdPreEl = trdExist.el.querySelector('pre.tool-result');
+                            if (trdPreEl && resultText) trdPreEl.textContent = resultText;
+                            // 更新 section class
+                            var trdSection = trdExist.el.querySelector('.tool-result-section');
+                            if (trdSection) { trdSection.className = 'tool-result-section ' + (success ? 'success' : 'error'); }
+                            wsToolResultStreams.delete(_ed.toolCallId);
+                        } else {
+                            var title = webshellAgentPx(_ed) + (success ? '✅ ' : '❌ ') + titleText;
+                            var sub = _em || (_ed.result ? String(_ed.result).slice(0, 300) : '');
+                            appendTimelineItem('tool_result', title, sub, _ed);
+                        }
+                        if (!streamingTarget) assistantDiv.textContent = '…';
+
+                    // ─── Eino sub-agent reply streaming ───
+                    } else if (_et === 'eino_agent_reply_stream_start' && _ed.streamId) {
+                        var repTS = wsTOr('chat.einoAgentReplyTitle', '子代理回复');
+                        var runTS = wsTOr('timeline.running', '执行中...');
                         var itemS = document.createElement('div');
                         itemS.className = 'webshell-ai-timeline-item webshell-ai-timeline-eino_agent_reply';
-                        itemS.innerHTML = '<span class="webshell-ai-timeline-title">' + escapeHtml(webshellAgentPx(rdS) + '💬 ' + repTS + ' · ' + runTS) + '</span>';
+                        itemS.innerHTML = '<span class="webshell-ai-timeline-title">' + escapeHtml(webshellAgentPx(_ed) + '💬 ' + repTS + ' · ' + runTS) + '</span>';
                         timelineContainer.appendChild(itemS);
                         timelineContainer.classList.add('has-items');
-                        einoSubReplyStreams.set(rdS.streamId, { el: itemS, buf: '' });
+                        einoSubReplyStreams.set(_ed.streamId, { el: itemS, buf: '' });
                         if (!streamingTarget) assistantDiv.textContent = '…';
-                    } else if (eventData.type === 'eino_agent_reply_stream_delta' && eventData.data && eventData.data.streamId) {
-                        var stD = einoSubReplyStreams.get(eventData.data.streamId);
+                    } else if (_et === 'eino_agent_reply_stream_delta' && _ed.streamId) {
+                        var stD = einoSubReplyStreams.get(_ed.streamId);
                         if (stD) {
-                            stD.buf += (eventData.message || '');
+                            stD.buf += (_em || '');
                             var preD = stD.el.querySelector('.webshell-eino-reply-stream-body');
                             if (!preD) {
                                 preD = document.createElement('pre');
@@ -2581,17 +2989,20 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
                                 preD.style.whiteSpace = 'pre-wrap';
                                 stD.el.appendChild(preD);
                             }
-                            preD.textContent = stD.buf;
+                            if (typeof formatMarkdown === 'function') {
+                                preD.innerHTML = formatMarkdown(stD.buf);
+                            } else {
+                                preD.textContent = stD.buf;
+                            }
                         }
                         if (!streamingTarget) assistantDiv.textContent = '…';
-                    } else if (eventData.type === 'eino_agent_reply_stream_end' && eventData.data && eventData.data.streamId) {
-                        var stE = einoSubReplyStreams.get(eventData.data.streamId);
+                    } else if (_et === 'eino_agent_reply_stream_end' && _ed.streamId) {
+                        var stE = einoSubReplyStreams.get(_ed.streamId);
                         if (stE) {
-                            var fullE = (eventData.message != null && eventData.message !== '') ? String(eventData.message) : stE.buf;
-                            stE.buf = fullE;
-                            var repTE = (typeof window.t === 'function') ? window.t('chat.einoAgentReplyTitle') : '子代理回复';
+                            var fullE = (_em != null && _em !== '') ? String(_em) : stE.buf;
+                            var repTE = wsTOr('chat.einoAgentReplyTitle', '子代理回复');
                             var titE = stE.el.querySelector('.webshell-ai-timeline-title');
-                            if (titE) titE.textContent = webshellAgentPx(eventData.data) + '💬 ' + repTE;
+                            if (titE) titE.textContent = webshellAgentPx(_ed) + '💬 ' + repTE;
                             var preE = stE.el.querySelector('.webshell-eino-reply-stream-body');
                             if (!preE) {
                                 preE = document.createElement('pre');
@@ -2599,14 +3010,17 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
                                 preE.style.whiteSpace = 'pre-wrap';
                                 stE.el.appendChild(preE);
                             }
-                            preE.textContent = fullE;
-                            einoSubReplyStreams.delete(eventData.data.streamId);
+                            if (typeof formatMarkdown === 'function') {
+                                preE.innerHTML = formatMarkdown(fullE);
+                            } else {
+                                preE.textContent = fullE;
+                            }
+                            einoSubReplyStreams.delete(_ed.streamId);
                         }
                         if (!streamingTarget) assistantDiv.textContent = '…';
-                    } else if (eventData.type === 'eino_agent_reply' && eventData.message) {
-                        var rd = eventData.data || {};
-                        var replyT = (typeof window.t === 'function') ? window.t('chat.einoAgentReplyTitle') : '子代理回复';
-                        appendTimelineItem('eino_agent_reply', webshellAgentPx(rd) + '💬 ' + replyT, eventData.message, rd);
+                    } else if (_et === 'eino_agent_reply' && _em) {
+                        var replyT = wsTOr('chat.einoAgentReplyTitle', '子代理回复');
+                        appendTimelineItem('eino_agent_reply', webshellAgentPx(_ed) + '💬 ' + replyT, _em, _ed);
                         if (!streamingTarget) assistantDiv.textContent = '…';
                     }
                 } catch (e) { /* ignore parse error */ }
@@ -2615,10 +3029,15 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
             return reader.read().then(processChunk);
         });
     }).catch(function (err) {
-        renderWebshellAiErrorMessage(assistantDiv, '请求异常: ' + (err && err.message ? err.message : String(err)));
+        var msg = err && err.message ? err.message : String(err);
+        var isAbort = /abort/i.test(msg);
+        if (!isAbort) {
+            renderWebshellAiErrorMessage(assistantDiv, '请求异常: ' + msg);
+        }
     }).then(function () {
-        webshellAiSending = false;
-        if (sendBtn) sendBtn.disabled = false;
+        webshellAiAbortController = null;
+        webshellAiStreamReader = null;
+        wsSetAiSendingState(false);
         if (assistantDiv.textContent === '…' && !streamingTarget) {
             // 没有任何 response 内容，保持纯文本提示
             assistantDiv.textContent = '无回复内容';

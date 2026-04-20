@@ -11353,12 +11353,53 @@ header {
 .webshell-ai-msg ol {
     padding-left: 20px;
 }
-.webshell-ai-input-row {
+/* WebShell AI 输入区域：选择器 + 输入框同行 */
+.webshell-ai-input-area {
     flex-shrink: 0;
     display: flex;
-    gap: 10px;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
     padding: 8px 14px;
     border-top: 1px solid var(--border-color);
+}
+.webshell-ai-selectors-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+}
+.webshell-ai-selectors-row .role-selector-btn {
+    height: 36px;
+    padding: 4px 10px;
+    font-size: 0.8125rem;
+    border-radius: 8px;
+}
+.webshell-ai-selectors-row .role-selector-icon {
+    font-size: 0.85rem;
+}
+.webshell-ai-selectors-row .role-selector-text {
+    font-size: 0.8125rem;
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ws-role-selector-wrapper {
+    position: relative;
+    flex-shrink: 0;
+}
+.ws-agent-mode-wrapper {
+    flex-shrink: 0;
+}
+.ws-agent-mode-wrapper .agent-mode-inner {
+    position: relative;
+}
+.webshell-ai-input-row {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 10px;
     align-items: center;
 }
 .webshell-ai-input {
@@ -11391,7 +11432,8 @@ header {
 .webshell-ai-input::-webkit-scrollbar-thumb:hover {
     background: rgba(15, 23, 42, 0.4);
 }
-.webshell-ai-input-row .btn-primary {
+.webshell-ai-input-row .btn-primary,
+.webshell-ai-input-row .webshell-ai-stop-btn {
     flex-shrink: 0;
     height: 36px;
     min-width: 72px;
@@ -11399,6 +11441,18 @@ header {
     display: flex;
     align-items: center;
     justify-content: center;
+}
+.webshell-ai-stop-btn {
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+.webshell-ai-stop-btn:hover {
+    background: #dc2626;
 }
 
 /* WebShell 数据库管理 Tab */
@@ -13465,6 +13519,7 @@ header {
     min-width: 0;
     flex: 1;
     padding-top: 2px;
+    text-align: left;
 }
 
 .role-selection-item-name-main {
