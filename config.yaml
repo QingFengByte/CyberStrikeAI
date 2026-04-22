@@ -63,7 +63,6 @@ agent:
 # 启用后需重启服务才会注册 /api/multi-agent 与 /api/multi-agent/stream；Deep / Plan-Execute / Supervisor 由对话页与 WebShell 所选模式在请求体中传入；机器人/批量无请求体时固定按 deep
 multi_agent:
   enabled: true
-  default_mode: multi # single | multi（前端默认，仍可用界面切换）
   robot_use_multi_agent: true # true 时企业微信/钉钉/飞书机器人也走 Eino 多代理（成本更高）
   batch_use_multi_agent: false # true 时「批量任务」队列中每个子任务也走 Eino 多代理（成本更高）
   max_iteration: 0 # 主代理 / plan_execute 执行器最大轮次，0 表示沿用 agent.max_iterations
