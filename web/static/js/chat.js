@@ -1,4 +1,5 @@
 let currentConversationId = null;
+let loadConversationRequestSeq = 0;
 
 // @ 提及相关状态
 let mentionTools = [];
@@ -39,6 +40,17 @@ const CHAT_AGENT_MODE_EINO_SINGLE = 'eino_single';
 const CHAT_AGENT_EINO_MODES = ['deep', 'plan_execute', 'supervisor'];
 let multiAgentAPIEnabled = false;
 
+// 人机协同（HITL）会话级配置
+const HITL_STORAGE_PREFIX = 'cyberstrike-chat-hitl';
+const HITL_DRAFT_KEY = 'cyberstrike-chat-hitl-draft';
+/** 跨会话记忆：用户最近一次在侧栏选择的 HITL 偏好（与 hitl.js 中 readHitlGlobalLast 使用同一 key） */
+const HITL_GLOBAL_LAST_KEY = `${HITL_STORAGE_PREFIX}:__last__`;
+const HITL_MODE_OFF = 'off';
+const HITL_MODE_APPROVAL = 'approval';
+const HITL_MODE_REVIEW_EDIT = 'review_edit';
+const HITL_MODE_OPTIONS = [HITL_MODE_OFF, HITL_MODE_APPROVAL, HITL_MODE_REVIEW_EDIT];
+let hitlApplyFeedbackTimer = null;
+
 function normalizeOrchestrationClient(s) {
     const v = String(s || '').trim().toLowerCase().replace(/-/g, '_');
     if (v === 'plan_execute' || v === 'planexecute' || v === 'pe') return 'plan_execute';
@@ -52,6 +64,302 @@ function chatAgentModeIsEino(mode) {
 
 function chatAgentModeIsEinoSingle(mode) {
     return mode === CHAT_AGENT_MODE_EINO_SINGLE;
+}
+
+function normalizeHitlMode(mode) {
+    let v = String(mode || '').trim().toLowerCase().replace(/-/g, '_');
+    if (v === 'feedback' || v === 'followup') {
+        v = HITL_MODE_APPROVAL;
+    }
+    if (HITL_MODE_OPTIONS.includes(v)) return v;
+    return HITL_MODE_OFF;
+}
+
+function defaultHitlConfig() {
+    return {
+        mode: HITL_MODE_OFF,
+        sensitiveTools: '',
+        updatedAt: ''
+    };
+}
+
+/** 白名单字符串拆成数组（逗号或换行分隔，与 textarea 一致） */
+function hitlToolsSplitToArray(s) {
+    return String(s || '')
+        .split(/[,\n\r]+/)
+        .map(function (x) { return x.trim(); })
+        .filter(Boolean);
+}
+
+/** 与 config.yaml hitl.tool_whitelist 合并为输入框展示（全局项在前，去重不区分大小写） */
+function hitlMergeToolsForDisplay(globalArr, sessionToolsArr) {
+    const seen = Object.create(null);
+    const out = [];
+    function addOne(t) {
+        const n = String(t || '').trim();
+        if (!n) return;
+        const k = n.toLowerCase();
+        if (seen[k]) return;
+        seen[k] = true;
+        out.push(n);
+    }
+    if (Array.isArray(globalArr)) {
+        globalArr.forEach(addOne);
+    }
+    if (Array.isArray(sessionToolsArr)) {
+        sessionToolsArr.forEach(addOne);
+    }
+    return out.join(', ');
+}
+
+/** 保存/发请求前去掉全局白名单工具，避免会话里重复存 config 已有项 */
+function hitlStripGlobalToolsFromFormString(globalArr, commaStr) {
+    if (!Array.isArray(globalArr) || globalArr.length === 0) {
+        return typeof commaStr === 'string' ? commaStr.trim() : '';
+    }
+    const g = Object.create(null);
+    globalArr.forEach(function (t) {
+        const k = String(t || '').trim().toLowerCase();
+        if (k) g[k] = true;
+    });
+    return hitlToolsSplitToArray(commaStr)
+        .filter(function (p) {
+            return p && !g[p.toLowerCase()];
+        })
+        .join(', ');
+}
+
+function getHitlStorageKeyByConversation(conversationId) {
+    return `${HITL_STORAGE_PREFIX}:${String(conversationId || '').trim()}`;
+}
+
+function getHitlModeLabel(mode) {
+    const safeMode = normalizeHitlMode(mode);
+    if (typeof window.t === 'function') {
+        switch (safeMode) {
+            case HITL_MODE_APPROVAL:
+                return window.t('chat.hitlModeApproval');
+            case HITL_MODE_REVIEW_EDIT:
+                return window.t('chat.hitlModeReviewEdit');
+            default:
+                return window.t('chat.hitlModeOff');
+        }
+    }
+    return safeMode;
+}
+
+function getHitlLastGlobalConfig() {
+    const fallback = defaultHitlConfig();
+    try {
+        const raw = localStorage.getItem(HITL_GLOBAL_LAST_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return {
+            mode: normalizeHitlMode(parsed.mode),
+            sensitiveTools: typeof parsed.sensitiveTools === 'string' ? parsed.sensitiveTools : fallback.sensitiveTools,
+            updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
+        };
+    } catch (e) {
+        return null;
+    }
+}
+
+function saveHitlLastGlobalConfig(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    try {
+        localStorage.setItem(HITL_GLOBAL_LAST_KEY, JSON.stringify(payload));
+    } catch (e) {
+        console.warn('saveHitlLastGlobalConfig failed', e);
+    }
+}
+
+function getHitlConfigForConversation(conversationId) {
+    const fallback = defaultHitlConfig();
+    const cid = conversationId ? String(conversationId).trim() : '';
+    if (!cid) {
+        const globalLast = getHitlLastGlobalConfig();
+        let draftCfg = null;
+        try {
+            const raw = localStorage.getItem(HITL_DRAFT_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed && typeof parsed === 'object') {
+                    draftCfg = {
+                        mode: normalizeHitlMode(parsed.mode),
+                        sensitiveTools: typeof parsed.sensitiveTools === 'string' ? parsed.sensitiveTools : fallback.sensitiveTools,
+                        updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
+                    };
+                }
+            }
+        } catch (e) {
+            draftCfg = null;
+        }
+        const g = globalLast ? {
+            mode: normalizeHitlMode(globalLast.mode),
+            sensitiveTools: typeof globalLast.sensitiveTools === 'string' ? globalLast.sensitiveTools : fallback.sensitiveTools,
+            updatedAt: typeof globalLast.updatedAt === 'string' ? globalLast.updatedAt : ''
+        } : null;
+        if (!draftCfg && !g) return fallback;
+        if (!draftCfg) return g;
+        if (!g) return draftCfg;
+        const tg = Date.parse(g.updatedAt) || 0;
+        const td = Date.parse(draftCfg.updatedAt) || 0;
+        return tg > td ? g : draftCfg;
+    }
+    const key = getHitlStorageKeyByConversation(cid);
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) {
+            return getHitlLastGlobalConfig() || fallback;
+        }
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') {
+            return getHitlLastGlobalConfig() || fallback;
+        }
+        return {
+            mode: normalizeHitlMode(parsed.mode),
+            sensitiveTools: typeof parsed.sensitiveTools === 'string' ? parsed.sensitiveTools : fallback.sensitiveTools,
+            updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : ''
+        };
+    } catch (e) {
+        return getHitlLastGlobalConfig() || fallback;
+    }
+}
+
+function saveHitlConfigForConversation(conversationId, cfg, opts) {
+    const syncGlobalLast = !!(opts && opts.syncGlobalLast);
+    const payload = {
+        mode: normalizeHitlMode(cfg && cfg.mode),
+        sensitiveTools: typeof (cfg && cfg.sensitiveTools) === 'string' ? cfg.sensitiveTools : '',
+        updatedAt: typeof (cfg && cfg.updatedAt) === 'string' ? cfg.updatedAt : ''
+    };
+    const key = conversationId ? getHitlStorageKeyByConversation(conversationId) : HITL_DRAFT_KEY;
+    try {
+        localStorage.setItem(key, JSON.stringify(payload));
+        if (syncGlobalLast) {
+            saveHitlLastGlobalConfig(payload);
+        }
+    } catch (e) {
+        console.warn('saveHitlConfigForConversation failed', e);
+    }
+}
+
+function readHitlConfigFromForm() {
+    const modeEl = document.getElementById('hitl-mode-select');
+    const toolsEl = document.getElementById('hitl-sensitive-tools');
+    const mode = normalizeHitlMode(modeEl ? modeEl.value : HITL_MODE_OFF);
+    let sensitiveTools = toolsEl ? String(toolsEl.value || '').trim() : '';
+    const g = typeof window !== 'undefined' ? window.csaiHitlGlobalToolWhitelist : null;
+    if (Array.isArray(g) && g.length > 0) {
+        sensitiveTools = hitlStripGlobalToolsFromFormString(g, sensitiveTools);
+    }
+    return {
+        mode,
+        sensitiveTools,
+        updatedAt: new Date().toISOString()
+    };
+}
+
+function updateHitlStatusUI(_cfg) {
+    /* 侧栏已改为「应用」按钮生效，不再用角标展示模式 */
+}
+
+function applyHitlConfigToUI(cfg) {
+    const conf = cfg || defaultHitlConfig();
+    const modeEl = document.getElementById('hitl-mode-select');
+    const toolsEl = document.getElementById('hitl-sensitive-tools');
+    if (modeEl) modeEl.value = normalizeHitlMode(conf.mode);
+    let toolsVal = conf.sensitiveTools || '';
+    const g = typeof window !== 'undefined' ? window.csaiHitlGlobalToolWhitelist : null;
+    if (Array.isArray(g) && g.length > 0) {
+        const sessionArr = hitlToolsSplitToArray(toolsVal);
+        toolsVal = hitlMergeToolsForDisplay(g, sessionArr);
+    }
+    if (toolsEl) toolsEl.value = toolsVal;
+    updateHitlStatusUI(conf);
+}
+
+function refreshHitlConfigByCurrentConversation() {
+    const cfg = getHitlConfigForConversation(currentConversationId || '');
+    applyHitlConfigToUI(cfg);
+}
+
+function showHitlApplyFeedback(text, isError, partial) {
+    const el = document.getElementById('hitl-apply-feedback');
+    if (hitlApplyFeedbackTimer) {
+        clearTimeout(hitlApplyFeedbackTimer);
+        hitlApplyFeedbackTimer = null;
+    }
+    if (!el) {
+        if (text && isError) {
+            alert(text);
+        }
+        return;
+    }
+    el.classList.toggle('hitl-apply-feedback--error', !!isError);
+    el.classList.toggle('hitl-apply-feedback--partial', !!partial && !isError);
+    if (!text) {
+        el.textContent = '';
+        el.style.display = 'none';
+        el.classList.remove('hitl-apply-feedback--error', 'hitl-apply-feedback--partial');
+        return;
+    }
+    el.textContent = text;
+    el.style.display = 'block';
+    if (!isError) {
+        hitlApplyFeedbackTimer = setTimeout(function () {
+            el.textContent = '';
+            el.style.display = 'none';
+            el.classList.remove('hitl-apply-feedback--error');
+            el.classList.remove('hitl-apply-feedback--partial');
+            hitlApplyFeedbackTimer = null;
+        }, 3200);
+    }
+}
+
+/** 侧栏人机协同：修改模式/白名单后点此写入本地、合并展示并同步服务端 */
+async function applyHitlSidebarConfig() {
+    const btn = document.getElementById('hitl-apply-btn');
+    showHitlApplyFeedback('', false);
+    if (btn) btn.disabled = true;
+    try {
+        const cfg = readHitlConfigFromForm();
+        const cid = typeof currentConversationId === 'string' ? currentConversationId.trim() : '';
+        saveHitlConfigForConversation(cid, cfg, { syncGlobalLast: true });
+
+        const toolsArr = hitlToolsSplitToArray(cfg.sensitiveTools || '');
+
+        let yamlMerged = false;
+        if (!cid && toolsArr.length > 0 && typeof window.mergeHitlGlobalToolWhitelist === 'function') {
+            const newGlobal = await window.mergeHitlGlobalToolWhitelist(toolsArr);
+            if (Array.isArray(newGlobal)) {
+                window.csaiHitlGlobalToolWhitelist = newGlobal;
+            }
+            yamlMerged = true;
+        }
+
+        applyHitlConfigToUI(cfg);
+
+        if (cid && typeof window.saveHitlConversationConfig === 'function') {
+            await window.saveHitlConversationConfig(cid, cfg);
+            const ok = typeof window.t === 'function' ? window.t('chat.hitlApplyOkSync') : '人机协同配置已保存并同步到服务器。';
+            showHitlApplyFeedback(ok, false);
+        } else if (yamlMerged) {
+            const okYaml = typeof window.t === 'function' ? window.t('chat.hitlApplyOkWhitelistYaml') : '免审批工具已合并进 config.yaml 并生效。协同模式、超时等仍须选中会话后再点「应用」才会写入服务器。';
+            showHitlApplyFeedback(okYaml, false);
+        } else {
+            const localOnly = typeof window.t === 'function' ? window.t('chat.hitlApplyOkLocal') : '已保存到本浏览器。';
+            showHitlApplyFeedback(localOnly, false);
+        }
+    } catch (e) {
+        console.warn('applyHitlSidebarConfig', e);
+        const prefix = typeof window.t === 'function' ? window.t('chat.hitlApplyFail') : '同步到服务器失败';
+        const detail = (e && e.message) ? e.message : String(e);
+        showHitlApplyFeedback(prefix + (detail ? '：' + detail : ''), true);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 /** 将 localStorage / 历史值规范为 react | eino_single | deep | plan_execute | supervisor */
@@ -70,6 +378,7 @@ function chatAgentModeNormalizeStored(stored, cfg) {
 }
 
 if (typeof window !== 'undefined') {
+    window.csaiHitlGlobalToolWhitelist = window.csaiHitlGlobalToolWhitelist || [];
     window.csaiChatAgentMode = {
         EINO_MODES: CHAT_AGENT_EINO_MODES,
         EINO_SINGLE: CHAT_AGENT_MODE_EINO_SINGLE,
@@ -79,6 +388,15 @@ if (typeof window !== 'undefined') {
         normalizeStored: chatAgentModeNormalizeStored,
         normalizeOrchestration: normalizeOrchestrationClient
     };
+    window.applyHitlSidebarConfig = applyHitlSidebarConfig;
+    window.readHitlConfigFromForm = readHitlConfigFromForm;
+    window.applyHitlConfigToUI = applyHitlConfigToUI;
+    window.saveHitlConfigForConversation = saveHitlConfigForConversation;
+    window.getHitlLastGlobalConfig = getHitlLastGlobalConfig;
+    window.hitlMergeToolsForDisplay = hitlMergeToolsForDisplay;
+    window.hitlStripGlobalToolsFromFormString = hitlStripGlobalToolsFromFormString;
+    window.hitlToolsSplitToArray = hitlToolsSplitToArray;
+    window.updateHitlStatusUI = updateHitlStatusUI;
 }
 
 function getAgentModeLabelForValue(mode) {
@@ -177,6 +495,10 @@ async function initChatAgentModeFromConfig() {
         multiAgentAPIEnabled = !!(cfg.multi_agent && cfg.multi_agent.enabled);
         if (typeof window !== 'undefined') {
             window.__csaiMultiAgentPublic = cfg.multi_agent || null;
+            const tw = cfg.hitl && cfg.hitl.tool_whitelist;
+            if (Array.isArray(tw)) {
+                window.csaiHitlGlobalToolWhitelist = tw.slice();
+            }
         }
         const wrap = document.getElementById('agent-mode-wrapper');
         const sel = document.getElementById('agent-mode-select');
@@ -378,6 +700,15 @@ async function sendMessage() {
         conversationId: currentConversationId,
         role: typeof getCurrentRole === 'function' ? getCurrentRole() : ''
     };
+    const hitlCfg = readHitlConfigFromForm();
+    if (normalizeHitlMode(hitlCfg.mode) !== HITL_MODE_OFF) {
+        const sensitiveTools = hitlToolsSplitToArray(hitlCfg.sensitiveTools || '');
+        body.hitl = {
+            enabled: true,
+            mode: normalizeHitlMode(hitlCfg.mode),
+            sensitiveTools: sensitiveTools
+        };
+    }
     if (hasAttachments) {
         body.attachments = chatAttachments.map((a) => ({
             fileName: a.fileName,
@@ -1879,6 +2210,9 @@ function renderProcessDetails(messageId, processDetails) {
             itemTitle = '❌ ' + (typeof window.t === 'function' ? window.t('chat.error') : '错误');
         } else if (eventType === 'cancelled') {
             itemTitle = '⛔ ' + (typeof window.t === 'function' ? window.t('chat.taskCancelled') : '任务已取消');
+        } else if (eventType === 'hitl_interrupt') {
+            const hitlMsg = (detail.message && String(detail.message).trim()) ? String(detail.message).trim() : (typeof window.t === 'function' ? window.t('hitl.pendingTitle') : '待审批');
+            itemTitle = agPx + '🧑‍⚖️ HITL · ' + hitlMsg;
         } else if (eventType === 'progress') {
             itemTitle = typeof window.translateProgressMessage === 'function' ? window.translateProgressMessage(detail.message || '') : (detail.message || '');
         }
@@ -1891,11 +2225,12 @@ function renderProcessDetails(messageId, processDetails) {
         });
     });
     
-    // 检查是否有错误或取消事件，如果有，确保详情默认折叠
+    // 检查是否有错误或取消事件，如果有，确保详情默认折叠（但仍有待审批 HITL 时保持展开，由 restoreHitlInlineForConversation 处理）
+    const hasPendingHitlInDetails = processDetails.some(d => d && d.eventType === 'hitl_interrupt');
     const hasErrorOrCancelled = processDetails.some(d => 
         d.eventType === 'error' || d.eventType === 'cancelled'
     );
-    if (hasErrorOrCancelled) {
+    if (hasErrorOrCancelled && !hasPendingHitlInDetails) {
         // 确保时间线是折叠的
         timeline.classList.remove('expanded');
         // 更新按钮文本为"展开详情"
@@ -2191,6 +2526,9 @@ async function startNewConversation() {
     }
     
     currentConversationId = null;
+    try {
+        window.currentConversationId = '';
+    } catch (e) { /* ignore */ }
     currentConversationGroupId = null; // 新对话不属于任何分组
     document.getElementById('chat-messages').innerHTML = '';
     const readyMsgNew = typeof window.t === 'function' ? window.t('chat.systemReadyMessage') : '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。';
@@ -2214,130 +2552,19 @@ async function startNewConversation() {
         chatInput.value = '';
         adjustTextareaHeight(chatInput);
     }
+    // 把当前侧栏人机协同选项写入草稿与「最近应用」记忆，避免刷新时被旧草稿里的「关闭」覆盖
+    try {
+        if (typeof readHitlConfigFromForm === 'function' && typeof saveHitlConfigForConversation === 'function') {
+            const snap = readHitlConfigFromForm();
+            saveHitlConfigForConversation('', snap, { syncGlobalLast: true });
+        }
+    } catch (e) { /* ignore */ }
+    refreshHitlConfigByCurrentConversation();
 }
 
-// 加载对话列表（按时间分组）
+// 与 loadConversationsWithGroups 合并实现，避免并发加载时重复追加列表项
 async function loadConversations(searchQuery = '') {
-    try {
-        let url = '/api/conversations?limit=50';
-        if (searchQuery && searchQuery.trim()) {
-            url += '&search=' + encodeURIComponent(searchQuery.trim());
-        }
-        const response = await apiFetch(url);
-
-        const listContainer = document.getElementById('conversations-list');
-        if (!listContainer) {
-            return;
-        }
-
-        // 保存滚动位置
-        const sidebarContent = listContainer.closest('.sidebar-content');
-        const savedScrollTop = sidebarContent ? sidebarContent.scrollTop : 0;
-
-        const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;" data-i18n="chat.noHistoryConversations"></div>';
-        listContainer.innerHTML = '';
-
-        // 如果响应不是200，显示空状态（友好处理，不显示错误）
-        if (!response.ok) {
-            listContainer.innerHTML = emptyStateHtml;
-            if (typeof window.applyTranslations === 'function') window.applyTranslations(listContainer);
-            return;
-        }
-
-        const conversations = await response.json();
-
-        if (!Array.isArray(conversations) || conversations.length === 0) {
-            listContainer.innerHTML = emptyStateHtml;
-            if (typeof window.applyTranslations === 'function') window.applyTranslations(listContainer);
-            return;
-        }
-
-        const now = new Date();
-        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const weekday = todayStart.getDay() === 0 ? 7 : todayStart.getDay();
-        const startOfWeek = new Date(todayStart);
-        startOfWeek.setDate(todayStart.getDate() - (weekday - 1));
-        const yesterdayStart = new Date(todayStart);
-        yesterdayStart.setDate(todayStart.getDate() - 1);
-
-        const groups = {
-            today: [],
-            yesterday: [],
-            thisWeek: [],
-            earlier: [],
-        };
-
-        conversations.forEach(conv => {
-            const dateObj = conv.updatedAt ? new Date(conv.updatedAt) : new Date();
-            const validDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
-            const groupKey = getConversationGroup(validDate, todayStart, startOfWeek, yesterdayStart);
-            groups[groupKey].push({
-                ...conv,
-                _time: validDate,
-                _timeText: formatConversationTimestamp(validDate, todayStart, yesterdayStart),
-            });
-        });
-
-        const groupOrder = [
-            { key: 'today', label: '今天' },
-            { key: 'yesterday', label: '昨天' },
-            { key: 'thisWeek', label: '本周' },
-            { key: 'earlier', label: '更早' },
-        ];
-
-        const fragment = document.createDocumentFragment();
-        let rendered = false;
-
-        groupOrder.forEach(({ key, label }) => {
-            const items = groups[key];
-            if (!items || items.length === 0) {
-                return;
-            }
-            rendered = true;
-
-            const section = document.createElement('div');
-            section.className = 'conversation-group';
-
-            const title = document.createElement('div');
-            title.className = 'conversation-group-title';
-            title.textContent = label;
-            section.appendChild(title);
-
-            items.forEach(itemData => {
-                // 判断是否置顶
-                const isPinned = itemData.pinned || false;
-                section.appendChild(createConversationListItemWithMenu(itemData, isPinned));
-            });
-
-            fragment.appendChild(section);
-        });
-
-        if (!rendered) {
-            listContainer.innerHTML = emptyStateHtml;
-            if (typeof window.applyTranslations === 'function') window.applyTranslations(listContainer);
-            return;
-        }
-
-        listContainer.appendChild(fragment);
-        updateActiveConversation();
-        
-        // 恢复滚动位置
-        if (sidebarContent) {
-            // 使用 requestAnimationFrame 确保 DOM 已经更新
-            requestAnimationFrame(() => {
-                sidebarContent.scrollTop = savedScrollTop;
-            });
-        }
-    } catch (error) {
-        console.error('加载对话列表失败:', error);
-        // 错误时显示空状态，而不是错误提示（更友好的用户体验）
-        const listContainer = document.getElementById('conversations-list');
-        if (listContainer) {
-            const emptyStateHtml = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.875rem;" data-i18n="chat.noHistoryConversations"></div>';
-            listContainer.innerHTML = emptyStateHtml;
-            if (typeof window.applyTranslations === 'function') window.applyTranslations(listContainer);
-        }
-    }
+    return loadConversationsWithGroups(searchQuery);
 }
 
 function createConversationListItem(conversation) {
@@ -2459,7 +2686,7 @@ function formatConversationTimestamp(dateObj, todayStart, yesterdayStart) {
     return dateObj.toLocaleString(fmtLocale, fullDateOpts);
 }
 
-function getConversationGroup(dateObj, todayStart, startOfWeek, yesterdayStart) {
+function getConversationGroup(dateObj, todayStart, sevenDaysCutoff, yesterdayStart) {
     if (!(dateObj instanceof Date) || isNaN(dateObj.getTime())) {
         return 'earlier';
     }
@@ -2473,21 +2700,29 @@ function getConversationGroup(dateObj, todayStart, startOfWeek, yesterdayStart) 
     if (messageDay.getTime() === yesterday.getTime()) {
         return 'yesterday';
     }
-    if (messageDay >= startOfWeek && messageDay < today) {
-        return 'thisWeek';
+    const cutoff = new Date(sevenDaysCutoff.getFullYear(), sevenDaysCutoff.getMonth(), sevenDaysCutoff.getDate());
+    if (messageDay >= cutoff && messageDay < yesterday) {
+        return 'last7Days';
     }
     return 'earlier';
 }
 
 // 加载对话
 async function loadConversation(conversationId) {
+    const seq = ++loadConversationRequestSeq;
     try {
         // 轻量加载：不带 processDetails，避免历史会话切换卡顿；展开详情时再按需拉取
         const response = await apiFetch(`/api/conversations/${conversationId}?include_process_details=0`);
+        if (seq !== loadConversationRequestSeq) {
+            return;
+        }
         const conversation = await response.json();
         
         if (!response.ok) {
             alert('加载对话失败: ' + (conversation.error || '未知错误'));
+            return;
+        }
+        if (seq !== loadConversationRequestSeq) {
             return;
         }
         
@@ -2518,6 +2753,9 @@ async function loadConversation(conversationId) {
         if (Object.keys(conversationGroupMappingCache).length === 0) {
             await loadConversationGroupMapping();
         }
+        if (seq !== loadConversationRequestSeq) {
+            return;
+        }
         currentConversationGroupId = conversationGroupMappingCache[conversationId] || null;
 
         // 异步刷新分组列表高亮状态（不阻塞消息渲染）
@@ -2525,6 +2763,14 @@ async function loadConversation(conversationId) {
         
         // 更新当前对话ID
         currentConversationId = conversationId;
+        try {
+            window.currentConversationId = conversationId;
+        } catch (e) { /* ignore */ }
+        if (typeof window.syncHitlConfigFromServer === 'function') {
+            await window.syncHitlConfigFromServer(conversationId);
+        } else {
+            refreshHitlConfigByCurrentConversation();
+        }
         updateActiveConversation();
         
         // 如果攻击链模态框打开且显示的不是当前对话，关闭它
@@ -2537,6 +2783,9 @@ async function loadConversation(conversationId) {
         
         // 清空消息区域
         const messagesDiv = document.getElementById('chat-messages');
+        if (seq !== loadConversationRequestSeq) {
+            return;
+        }
         messagesDiv.innerHTML = '';
         
         // 检查对话中是否有最近的消息，如果有，清除草稿（避免恢复已发送的消息）
@@ -2605,38 +2854,57 @@ async function loadConversation(conversationId) {
             const firstBatch = msgs.slice(0, FIRST_BATCH);
             const rest = msgs.slice(FIRST_BATCH);
 
+            let pendingMessageBatches = Promise.resolve();
+
             // 首批同步渲染
             firstBatch.forEach(renderOneMessage);
 
             // 剩余消息通过 requestAnimationFrame 分批渲染，避免阻塞 UI
             if (rest.length > 0) {
                 const savedConvId = conversationId;
-                let offset = 0;
-                const renderNextBatch = () => {
-                    // 如果用户已经切换到其他对话，停止渲染
-                    if (currentConversationId !== savedConvId) return;
-                    const batch = rest.slice(offset, offset + BATCH_SIZE);
-                    batch.forEach(renderOneMessage);
-                    offset += BATCH_SIZE;
-                    if (offset < rest.length) {
-                        requestAnimationFrame(renderNextBatch);
-                    } else {
-                        // 所有消息渲染完毕，滚动到底部
-                        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-                    }
-                };
-                requestAnimationFrame(renderNextBatch);
+                const savedSeq = seq;
+                pendingMessageBatches = new Promise((resolve) => {
+                    let offset = 0;
+                    const renderNextBatch = () => {
+                        if (savedSeq !== loadConversationRequestSeq || currentConversationId !== savedConvId) {
+                            resolve();
+                            return;
+                        }
+                        const batch = rest.slice(offset, offset + BATCH_SIZE);
+                        batch.forEach(renderOneMessage);
+                        offset += BATCH_SIZE;
+                        if (offset < rest.length) {
+                            requestAnimationFrame(renderNextBatch);
+                        } else {
+                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                            resolve();
+                        }
+                    };
+                    requestAnimationFrame(renderNextBatch);
+                });
+            }
+
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            addAttackChainButton(conversationId);
+            await pendingMessageBatches;
+            if (seq !== loadConversationRequestSeq) {
+                return;
+            }
+            if (currentConversationId === conversationId && typeof window.restoreHitlInlineForConversation === 'function') {
+                await window.restoreHitlInlineForConversation(conversationId);
             }
         } else {
             const readyMsgEmpty = typeof window.t === 'function' ? window.t('chat.systemReadyMessage') : '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。';
             addMessage('assistant', readyMsgEmpty, null, null, null, { systemReadyMessage: true });
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            addAttackChainButton(conversationId);
+            if (seq !== loadConversationRequestSeq) {
+                return;
+            }
+            if (currentConversationId === conversationId && typeof window.restoreHitlInlineForConversation === 'function') {
+                await window.restoreHitlInlineForConversation(conversationId);
+            }
         }
-
-        // 滚动到底部（首批渲染后立即滚动，剩余批次渲染后会再次滚动）
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
-
-        // 添加攻击链按钮
-        addAttackChainButton(conversationId);
     } catch (error) {
         console.error('加载对话失败:', error);
         alert('加载对话失败: ' + error.message);
@@ -2695,8 +2963,11 @@ async function deleteConversationTurnFromUI(anchorBackendMessageId) {
             throw new Error(data.error || data.message || 'delete failed');
         }
         await loadConversation(currentConversationId);
-        if (typeof loadConversations === 'function') loadConversations();
-        if (typeof loadConversationsWithGroups === 'function') loadConversationsWithGroups();
+        if (typeof loadConversationsWithGroups === 'function') {
+            loadConversationsWithGroups();
+        } else if (typeof loadConversations === 'function') {
+            loadConversations();
+        }
     } catch (error) {
         console.error('delete turn failed:', error);
         const failed = typeof window.t === 'function' ? window.t('chat.deleteTurnFailed') : '删除本轮失败';
@@ -2726,6 +2997,9 @@ async function deleteConversation(conversationId, skipConfirm = false) {
         // 如果删除的是当前对话，清空对话界面
         if (conversationId === currentConversationId) {
             currentConversationId = null;
+            try {
+                window.currentConversationId = '';
+            } catch (e) { /* ignore */ }
             document.getElementById('chat-messages').innerHTML = '';
             const readyMsgLoad = typeof window.t === 'function' ? window.t('chat.systemReadyMessage') : '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。';
             addMessage('assistant', readyMsgLoad, null, null, null, { systemReadyMessage: true });
@@ -4666,18 +4940,69 @@ async function loadConversationsWithGroups(searchQuery = '') {
         pinnedConvs.sort(sortByTime);
         normalConvs.sort(sortByTime);
 
+        const now = new Date();
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const yesterdayStart = new Date(todayStart);
+        yesterdayStart.setDate(todayStart.getDate() - 1);
+        const sevenDaysCutoff = new Date(todayStart);
+        sevenDaysCutoff.setDate(todayStart.getDate() - 7);
+
+        const tFn = typeof window.t === 'function' ? window.t.bind(window) : null;
+        const groupOrder = [
+            { key: 'today', label: tFn ? tFn('chat.historyGroupToday') : '今天' },
+            { key: 'yesterday', label: tFn ? tFn('chat.yesterday') : '昨天' },
+            { key: 'last7Days', label: tFn ? tFn('chat.historyGroupLast7Days') : '过去七天' },
+            { key: 'earlier', label: tFn ? tFn('chat.historyGroupEarlier') : '更早' },
+        ];
+
+        const groups = {
+            today: [],
+            yesterday: [],
+            last7Days: [],
+            earlier: [],
+        };
+
+        normalConvs.forEach(conv => {
+            const dateObj = conv.updatedAt ? new Date(conv.updatedAt) : new Date();
+            const validDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
+            const groupKey = getConversationGroup(validDate, todayStart, sevenDaysCutoff, yesterdayStart);
+            groups[groupKey].push({
+                ...conv,
+                _timeText: formatConversationTimestamp(validDate, todayStart, yesterdayStart),
+            });
+        });
+
         const fragment = document.createDocumentFragment();
 
-        // 添加置顶对话
         if (pinnedConvs.length > 0) {
             pinnedConvs.forEach(conv => {
-                fragment.appendChild(createConversationListItemWithMenu(conv, true));
+                const dateObj = conv.updatedAt ? new Date(conv.updatedAt) : new Date();
+                const validDate = isNaN(dateObj.getTime()) ? new Date() : dateObj;
+                fragment.appendChild(createConversationListItemWithMenu({
+                    ...conv,
+                    _timeText: formatConversationTimestamp(validDate, todayStart, yesterdayStart),
+                }, true));
             });
         }
 
-        // 添加普通对话
-        normalConvs.forEach(conv => {
-            fragment.appendChild(createConversationListItemWithMenu(conv, false));
+        groupOrder.forEach(({ key, label }) => {
+            const items = groups[key];
+            if (!items || items.length === 0) {
+                return;
+            }
+            const section = document.createElement('div');
+            section.className = 'conversation-group';
+
+            const title = document.createElement('div');
+            title.className = 'conversation-group-title';
+            title.textContent = label;
+            section.appendChild(title);
+
+            items.forEach(itemData => {
+                section.appendChild(createConversationListItemWithMenu(itemData, false));
+            });
+
+            fragment.appendChild(section);
         });
 
         if (fragment.children.length === 0) {
@@ -4749,7 +5074,7 @@ function createConversationListItemWithMenu(conversation, isPinned) {
     const time = document.createElement('div');
     time.className = 'conversation-time';
     const dateObj = conversation.updatedAt ? new Date(conversation.updatedAt) : new Date();
-    time.textContent = formatConversationTimestamp(dateObj);
+    time.textContent = conversation._timeText || formatConversationTimestamp(dateObj);
     contentWrapper.appendChild(time);
 
     // 如果对话属于某个分组，显示分组标签
@@ -6203,7 +6528,17 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
-    initChatAgentModeFromConfig();
+    initChatAgentModeFromConfig()
+        .then(function () {
+            refreshHitlConfigByCurrentConversation();
+        })
+        .catch(function () {
+            refreshHitlConfigByCurrentConversation();
+        });
+});
+
+document.addEventListener('languagechange', function () {
+    refreshHitlConfigByCurrentConversation();
 });
 
 // 点击外部关闭图标选择器、对话模式面板
@@ -6968,14 +7303,6 @@ function clearGroupSearch() {
 // 初始化时加载分组
 document.addEventListener('DOMContentLoaded', async () => {
     await loadGroups();
-    // 替换原来的loadConversations调用
-    if (typeof loadConversations === 'function') {
-        // 保留原函数，但使用新函数
-        const originalLoad = loadConversations;
-        loadConversations = function(...args) {
-            loadConversationsWithGroups(...args);
-        };
-    }
     await loadConversationsWithGroups();
     
     // 添加页面焦点时自动刷新对话列表的功能
@@ -7014,6 +7341,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!id) return;
         if (id === currentConversationId) {
             currentConversationId = null;
+            try {
+                window.currentConversationId = '';
+            } catch (e) { /* ignore */ }
             const messagesDiv = document.getElementById('chat-messages');
             if (messagesDiv) messagesDiv.innerHTML = '';
             const readyMsg = typeof window.t === 'function' ? window.t('chat.systemReadyMessage') : '系统已就绪。请输入您的测试需求，系统将自动执行相应的安全测试。';
@@ -7027,3 +7357,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 });
+
+// 顶层 async function 不会自动挂到 window，hitl 等脚本依赖 window.loadConversation
+if (typeof window !== 'undefined') {
+    window.loadConversation = loadConversation;
+    window.startNewConversation = startNewConversation;
+}

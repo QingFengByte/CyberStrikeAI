@@ -1666,12 +1666,24 @@ function startBatchQueueRefresh(queueId) {
         if ((addModal && addModal.style.display === 'block') || hasInlineEdit) {
             return;
         }
-        if (batchQueuesState.currentQueueId === queueId) {
-            showBatchQueueDetail(queueId);
-            refreshBatchQueues();
-        } else {
-            stopBatchQueueRefresh();
+        if (batchQueuesState._bqDetailRefreshing) {
+            return;
         }
+        if (batchQueuesState.currentQueueId !== queueId) {
+            stopBatchQueueRefresh();
+            return;
+        }
+        batchQueuesState._bqDetailRefreshing = true;
+        (async () => {
+            try {
+                await showBatchQueueDetail(queueId);
+                await refreshBatchQueues();
+            } catch (e) {
+                console.warn('批量队列定时刷新失败:', e);
+            } finally {
+                batchQueuesState._bqDetailRefreshing = false;
+            }
+        })();
     }, 3000); // 每3秒刷新一次
 }
 

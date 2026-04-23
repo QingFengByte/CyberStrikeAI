@@ -532,6 +532,10 @@ body {
     display: none;
 }
 
+.conversation-sidebar.collapsed .hitl-sidebar-card {
+    display: none;
+}
+
 .conversation-sidebar.collapsed .conversation-sidebar-header {
     flex-direction: column;
     align-items: center;
@@ -946,6 +950,273 @@ header {
     overflow-x: hidden;
     padding: 16px;
     min-height: 0;
+}
+
+.hitl-sidebar-card {
+    border-top: 1px solid var(--border-color);
+    background: linear-gradient(165deg, #f8fafc 0%, #f1f5f9 55%, #eef2f7 100%);
+    padding: 14px 12px 16px;
+    flex-shrink: 0;
+}
+
+.hitl-sidebar-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.hitl-sidebar-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    min-width: 0;
+}
+
+.hitl-sidebar-icon {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(0, 102, 255, 0.12), rgba(0, 102, 255, 0.06));
+    color: var(--accent-color);
+    border: 1px solid rgba(0, 102, 255, 0.18);
+}
+
+.hitl-sidebar-heading-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.hitl-sidebar-title {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+    line-height: 1.25;
+}
+
+.hitl-sidebar-subtitle {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    line-height: 1.3;
+}
+
+.hitl-apply-btn {
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    background: linear-gradient(180deg, var(--accent-color) 0%, var(--accent-hover) 100%);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    box-shadow: 0 1px 2px rgba(0, 102, 255, 0.25), 0 2px 8px rgba(0, 102, 255, 0.12);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+}
+
+.hitl-apply-btn:hover {
+    filter: brightness(1.05);
+    box-shadow: 0 2px 4px rgba(0, 102, 255, 0.3), 0 4px 12px rgba(0, 102, 255, 0.18);
+}
+
+.hitl-apply-btn:active {
+    transform: translateY(1px);
+}
+
+.hitl-apply-btn:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+    transform: none;
+    filter: none;
+}
+
+.hitl-apply-feedback {
+    display: none;
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(16, 185, 129, 0.12);
+    color: #047857;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.hitl-apply-feedback.hitl-apply-feedback--error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #b91c1c;
+    border-color: rgba(239, 68, 68, 0.22);
+}
+
+/* 仅本机保存、未请求服务端：避免与「已全部同步」同款绿色造成误解 */
+.hitl-apply-feedback.hitl-apply-feedback--partial {
+    background: rgba(245, 158, 11, 0.12);
+    color: #b45309;
+    border-color: rgba(245, 158, 11, 0.25);
+}
+
+.hitl-sidebar-config {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 14px;
+    padding: 12px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 24px rgba(15, 23, 42, 0.04);
+}
+
+.hitl-config-field {
+    margin-bottom: 14px;
+}
+
+.hitl-config-field:last-child {
+    margin-bottom: 0;
+}
+
+.hitl-config-field--tools {
+    margin-bottom: 0;
+}
+
+.hitl-config-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+    letter-spacing: -0.01em;
+}
+
+.hitl-config-hint {
+    margin: 8px 0 0;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+
+.hitl-config-select {
+    width: 100%;
+    height: 40px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-primary);
+    padding: 0 36px 0 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236c757d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hitl-config-textarea {
+    display: block;
+    width: 100%;
+    min-height: 72px;
+    max-height: 200px;
+    resize: vertical;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: #fafbfc;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    color: var(--text-primary);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.hitl-config-textarea::placeholder {
+    color: var(--text-muted);
+    font-family: inherit;
+}
+
+/* 其它页面内联 HITL 评论框等仍用 input 类名 */
+.hitl-config-input {
+    width: 100%;
+    height: 38px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #fff;
+    padding: 0 10px;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.hitl-pending-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.hitl-pending-item {
+    border: 1px solid rgba(99, 102, 241, 0.25);
+    border-radius: 10px;
+    padding: 12px;
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.hitl-pending-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.hitl-pending-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.hitl-edit-args {
+    width: 100%;
+    min-height: 76px;
+    margin-top: 8px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 8px;
+    background: #ffffff;
+    color: #1f2937;
+    padding: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+}
+
+.hitl-input-help {
+    margin-top: 6px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.4;
+}
+
+.hitl-inline-approval {
+    margin-top: 8px;
+    padding: 10px;
+    border: 1px solid #dbeafe;
+    background: #f8fbff;
+    border-radius: 8px;
+}
+
+.hitl-inline-approval.hitl-inline-done {
+    opacity: 0.8;
+}
+
+.hitl-config-select:focus,
+.hitl-config-textarea:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.14);
+    background: #fff;
 }
 
 .sidebar-title {
@@ -5671,6 +5942,7 @@ header {
     padding: 4px 0;
     transition: all 0.2s ease;
 }
+
 
 .legend-item:hover {
     transform: translateX(2px);

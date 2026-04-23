@@ -114,6 +114,17 @@
                             <span data-i18n="nav.chat">对话</span>
                         </div>
                     </div>
+                    <div class="nav-item" data-page="hitl">
+                        <div class="nav-item-content" data-title="人机协同" onclick="switchPage('hitl')">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="8" cy="7" r="3"></circle>
+                                <circle cx="16" cy="7" r="3"></circle>
+                                <path d="M2 20c0-3 2.5-5 6-5s6 2 6 5"></path>
+                                <path d="M10 20h12"></path>
+                            </svg>
+                            <span data-i18n="nav.hitl">人机协同</span>
+                        </div>
+                    </div>
                     <div class="nav-item" data-page="info-collect">
                         <div class="nav-item-content" data-title="信息收集" onclick="switchPage('info-collect')" data-i18n="nav.infoCollect" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -500,6 +511,41 @@
                                     <div id="conversations-list" class="conversations-list"></div>
                                 </div>
                             </div>
+                            <div class="hitl-sidebar-card" id="hitl-sidebar-card">
+                                <div class="hitl-sidebar-card-header">
+                                    <div class="hitl-sidebar-heading">
+                                        <span class="hitl-sidebar-icon" aria-hidden="true">
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                                <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>
+                                                <path d="M9.5 12.5l2 2 3-4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+                                            </svg>
+                                        </span>
+                                        <div class="hitl-sidebar-heading-text">
+                                            <span class="hitl-sidebar-title" data-i18n="chat.hitlTitle">人机协同</span>
+                                            <span class="hitl-sidebar-subtitle" data-i18n="chat.hitlCardSubtitle">审批与白名单</span>
+                                        </div>
+                                    </div>
+                                    <button type="button" class="hitl-apply-btn" id="hitl-apply-btn" onclick="window.applyHitlSidebarConfig && window.applyHitlSidebarConfig()">
+                                        <span data-i18n="chat.hitlApply">应用</span>
+                                    </button>
+                                </div>
+                                <div id="hitl-apply-feedback" class="hitl-apply-feedback" role="status" aria-live="polite"></div>
+                                <div class="hitl-sidebar-config">
+                                    <div class="hitl-config-field">
+                                        <label class="hitl-config-label" for="hitl-mode-select" data-i18n="chat.hitlModeLabel">模式</label>
+                                        <select id="hitl-mode-select" class="hitl-config-select">
+                                            <option value="off" data-i18n="chat.hitlModeOff">关闭</option>
+                                            <option value="approval" data-i18n="chat.hitlModeApproval">审批模式</option>
+                                            <option value="review_edit" data-i18n="chat.hitlModeReviewEdit">审查编辑</option>
+                                        </select>
+                                    </div>
+                                    <div class="hitl-config-field hitl-config-field--tools">
+                                        <label class="hitl-config-label" for="hitl-sensitive-tools" data-i18n="chat.hitlWhitelistTools">白名单工具（免审批，逗号分隔）</label>
+                                        <textarea id="hitl-sensitive-tools" class="hitl-config-textarea" rows="3" spellcheck="false" autocomplete="off" data-i18n="chat.hitlWhitelistPlaceholder" data-i18n-attr="placeholder" placeholder=""></textarea>
+                                        <p class="hitl-config-hint" data-i18n="chat.hitlWhitelistHint">每行一个或逗号分隔；与 config 中全局白名单合并展示。</p>
+                                    </div>
+                                </div>
+                            </div>
                         </aside>
                         
                         <!-- 分组详情页面 -->
@@ -672,6 +718,21 @@
                                     </svg>
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="page-hitl" class="page">
+                    <div class="page-header">
+                        <h2 data-i18n="hitl.pageTitle">人机协同审批</h2>
+                        <div class="page-header-actions">
+                            <button class="btn-secondary" onclick="refreshHitlPending()" data-i18n="common.refresh">刷新</button>
+                        </div>
+                    </div>
+                    <div class="page-content">
+                        <div class="settings-section">
+                            <h3 data-i18n="hitl.pendingTitle">待处理中断</h3>
+                            <div id="hitl-pending-list" class="hitl-pending-list"></div>
                         </div>
                     </div>
                 </div>
@@ -2746,6 +2807,7 @@
     <script src="/static/js/dashboard.js"></script>
     <script src="/static/js/monitor.js"></script>
     <script src="/static/js/chat.js"></script>
+    <script src="/static/js/hitl.js"></script>
     <script src="/static/js/settings.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm@4.19.0/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.5.0/lib/xterm-addon-fit.js"></script>

@@ -61,7 +61,8 @@
     "agentsManagement": "Agent management",
     "roles": "Roles",
     "rolesManagement": "Roles Management",
-    "settings": "System settings"
+    "settings": "System settings",
+    "hitl": "Human-in-the-loop"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -191,6 +192,9 @@
     "executionFailed": "Execution failed",
     "penetrationTestComplete": "Penetration test complete",
     "yesterday": "Yesterday",
+    "historyGroupToday": "Today",
+    "historyGroupLast7Days": "Past 7 days",
+    "historyGroupEarlier": "Older",
     "agentModeSelectAria": "Choose conversation execution mode",
     "agentModePanelTitle": "Conversation mode",
     "agentModeReactNative": "Native ReAct",
@@ -208,7 +212,29 @@
     "agentModeSingleHint": "Single-model ReAct loop for chat and tool use",
     "agentModeMultiHint": "Eino prebuilt orchestration (deep / plan_execute / supervisor) for complex tasks",
     "agentModeOrchPlanExecute": "Plan-Exec",
-    "agentModeOrchSupervisor": "Supervisor"
+    "agentModeOrchSupervisor": "Supervisor",
+    "hitlTitle": "Human-in-the-loop",
+    "hitlCardSubtitle": "Approvals & allowlist",
+    "hitlReviewer": "Review",
+    "hitlConfigTitle": "Collaboration mode config",
+    "hitlModeLabel": "Mode",
+    "hitlModeOff": "Off",
+    "hitlModeApproval": "Approval",
+    "hitlModeReviewEdit": "Review & Edit",
+    "hitlSensitiveTools": "Sensitive tools (comma-separated)",
+    "hitlWhitelistTools": "Whitelisted tools (skip approval, comma-separated)",
+    "hitlWhitelistPlaceholder": "e.g. read_file, grep or one tool per line (merged with global allowlist in config)",
+    "hitlWhitelistHint": "Separate with commas or new lines; shown merged with the global allowlist in config.",
+    "hitlApply": "Apply",
+    "hitlApplyOkSync": "HITL settings saved and synced to the server.",
+    "hitlApplyOkWhitelistYaml": "Tool whitelist merged into config.yaml and active. Mode and timeout still require selecting a conversation and clicking Apply to sync session settings to the server.",
+    "hitlApplyOkLocal": "Saved in this browser.",
+    "hitlApplyFail": "Failed to sync to server",
+    "hitlStatusOff": "Human-in-the-loop: Off"
+  },
+  "hitl": {
+    "pageTitle": "HITL approvals",
+    "pendingTitle": "Pending interrupts"
   },
   "progress": {
     "callingAI": "Calling AI model...",

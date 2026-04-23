@@ -61,7 +61,8 @@
     "agentsManagement": "Agent管理",
     "roles": "角色",
     "rolesManagement": "角色管理",
-    "settings": "系统设置"
+    "settings": "系统设置",
+    "hitl": "人机协同"
   },
   "dashboard": {
     "title": "仪表盘",
@@ -191,6 +192,9 @@
     "executionFailed": "执行失败",
     "penetrationTestComplete": "渗透测试完成",
     "yesterday": "昨天",
+    "historyGroupToday": "今天",
+    "historyGroupLast7Days": "过去七天",
+    "historyGroupEarlier": "更早",
     "agentModeSelectAria": "选择对话执行模式",
     "agentModePanelTitle": "对话模式",
     "agentModeReactNative": "原生 ReAct 模式",
@@ -208,7 +212,29 @@
     "agentModeSingleHint": "单模型 ReAct 循环，适合常规对话与工具调用",
     "agentModeMultiHint": "Eino 预置编排（deep / plan_execute / supervisor），适合复杂任务",
     "agentModeOrchPlanExecute": "Plan-Exec",
-    "agentModeOrchSupervisor": "Supervisor"
+    "agentModeOrchSupervisor": "Supervisor",
+    "hitlTitle": "人机协同",
+    "hitlCardSubtitle": "审批与白名单",
+    "hitlReviewer": "Review",
+    "hitlConfigTitle": "协同模式配置",
+    "hitlModeLabel": "模式",
+    "hitlModeOff": "关闭",
+    "hitlModeApproval": "审批模式",
+    "hitlModeReviewEdit": "审查编辑",
+    "hitlSensitiveTools": "敏感工具（逗号分隔）",
+    "hitlWhitelistTools": "白名单工具（免审批，逗号分隔）",
+    "hitlWhitelistPlaceholder": "例：read_file, grep 或每行一个工具名（与 config 全局白名单合并）",
+    "hitlWhitelistHint": "每行一个或逗号分隔；与 config 中全局白名单合并展示。",
+    "hitlApply": "应用",
+    "hitlApplyOkSync": "人机协同配置已保存并同步到服务器。",
+    "hitlApplyOkWhitelistYaml": "免审批工具已合并进 config.yaml 并生效。协同模式、超时等仍须选中会话后再点「应用」才会写入服务器。",
+    "hitlApplyOkLocal": "已保存到本浏览器。",
+    "hitlApplyFail": "同步到服务器失败",
+    "hitlStatusOff": "人机协同：关闭"
+  },
+  "hitl": {
+    "pageTitle": "人机协同审批",
+    "pendingTitle": "待处理中断"
   },
   "progress": {
     "callingAI": "正在调用AI模型...",
