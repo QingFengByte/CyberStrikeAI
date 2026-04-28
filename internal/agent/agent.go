@@ -39,6 +39,7 @@ type Agent struct {
 	toolNameMapping       map[string]string // 工具名称映射：OpenAI格式 -> 原始格式（用于外部MCP工具）
 	currentConversationID string            // 当前对话ID（用于自动传递给工具）
 	promptBaseDir         string            // 解析 system_prompt_path 时相对路径的基准目录（通常为 config.yaml 所在目录）
+	toolDescriptionMode   string            // 工具描述模式: "short" | "full"，默认 short
 }
 
 // ResultStorage 结果存储接口（直接使用 storage 包的类型）
@@ -162,6 +163,7 @@ func NewAgent(cfg *config.OpenAIConfig, agentCfg *config.AgentConfig, mcpServer 
 		resultStorage:        resultStorage,
 		largeResultThreshold: largeResultThreshold,
 		toolNameMapping:      make(map[string]string), // 初始化工具名称映射
+		toolDescriptionMode:  "short",
 	}
 }
 
@@ -922,7 +924,7 @@ func (a *Agent) AgentLoopWithProgress(ctx context.Context, userInput string, his
 }
 
 // getAvailableTools 获取可用工具
-// 从MCP服务器动态获取工具列表，使用简短描述以减少token消耗
+// 从MCP服务器动态获取工具列表，描述模式由 tool_description_mode 控制
 // roleTools: 角色配置的工具列表（toolKey格式），如果为空或nil，则使用所有工具（默认角色）
 func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 	// 构建角色工具集合（用于快速查找）
@@ -946,11 +948,7 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 				continue // 不在角色工具列表中，跳过
 			}
 		}
-		// 使用简短描述（如果存在），否则使用详细描述
-		description := mcpTool.ShortDescription
-		if description == "" {
-			description = mcpTool.Description
-		}
+		description := a.pickToolDescription(mcpTool.ShortDescription, mcpTool.Description)
 
 		// 转换schema中的类型为OpenAI标准类型
 		convertedSchema := a.convertSchemaTypes(mcpTool.InputSchema)
@@ -1024,11 +1022,7 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 					continue
 				}
 
-				// 使用简短描述（如果存在），否则使用详细描述
-				description := externalTool.ShortDescription
-				if description == "" {
-					description = externalTool.Description
-				}
+				description := a.pickToolDescription(externalTool.ShortDescription, externalTool.Description)
 
 				// 转换schema中的类型为OpenAI标准类型
 				convertedSchema := a.convertSchemaTypes(externalTool.InputSchema)
@@ -1061,6 +1055,19 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 	)
 
 	return tools
+}
+
+func (a *Agent) pickToolDescription(shortDesc, fullDesc string) string {
+	a.mu.RLock()
+	mode := strings.TrimSpace(strings.ToLower(a.toolDescriptionMode))
+	a.mu.RUnlock()
+	if mode == "full" {
+		return fullDesc
+	}
+	if shortDesc != "" {
+		return shortDesc
+	}
+	return fullDesc
 }
 
 // convertSchemaTypes 递归转换schema中的类型为OpenAI标准类型
@@ -1663,6 +1670,18 @@ func (a *Agent) UpdateMaxIterations(maxIterations int) {
 		a.maxIterations = maxIterations
 		a.logger.Info("Agent最大迭代次数已更新", zap.Int("max_iterations", maxIterations))
 	}
+}
+
+// UpdateToolDescriptionMode 更新工具描述模式（short/full）
+func (a *Agent) UpdateToolDescriptionMode(mode string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode != "full" {
+		mode = "short"
+	}
+	a.toolDescriptionMode = mode
+	a.logger.Info("Agent工具描述模式已更新", zap.String("tool_description_mode", mode))
 }
 
 // formatToolError 格式化工具错误信息，提供更友好的错误描述

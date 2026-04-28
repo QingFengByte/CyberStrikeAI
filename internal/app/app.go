@@ -133,6 +133,7 @@ func New(cfg *config.Config, log *logger.Logger) (*App, error) {
 		maxIterations = 30 // 默认值
 	}
 	agent := agent.NewAgent(&cfg.OpenAI, &cfg.Agent, mcpServer, externalMCPMgr, log.Logger, maxIterations)
+	agent.UpdateToolDescriptionMode(cfg.Security.ToolDescriptionMode)
 
 	// 设置结果存储到Agent
 	agent.SetResultStorage(resultStorage)

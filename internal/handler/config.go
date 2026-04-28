@@ -90,6 +90,7 @@ type AttackChainUpdater interface {
 type AgentUpdater interface {
 	UpdateConfig(cfg *config.OpenAIConfig)
 	UpdateMaxIterations(maxIterations int)
+	UpdateToolDescriptionMode(mode string)
 }
 
 // NewConfigHandler 创建新的配置处理器
@@ -232,13 +233,7 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 			if configToolMap[mcpTool.Name] {
 				continue
 			}
-			description := mcpTool.ShortDescription
-			if description == "" {
-				description = mcpTool.Description
-			}
-			if len(description) > 10000 {
-				description = description[:10000] + "..."
-			}
+			description := h.pickToolDescription(mcpTool.ShortDescription, mcpTool.Description)
 			tools = append(tools, ToolConfigInfo{
 				Name:        mcpTool.Name,
 				Description: description,
@@ -430,13 +425,7 @@ func (h *ConfigHandler) GetTools(c *gin.Context) {
 				continue
 			}
 
-			description := mcpTool.ShortDescription
-			if description == "" {
-				description = mcpTool.Description
-			}
-			if len(description) > 10000 {
-				description = description[:10000] + "..."
-			}
+			description := h.pickToolDescription(mcpTool.ShortDescription, mcpTool.Description)
 
 			toolInfo := ToolConfigInfo{
 				Name:        mcpTool.Name,
@@ -1061,6 +1050,7 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 	if h.agent != nil {
 		h.agent.UpdateConfig(&h.config.OpenAI)
 		h.agent.UpdateMaxIterations(h.config.Agent.MaxIterations)
+		h.agent.UpdateToolDescriptionMode(h.config.Security.ToolDescriptionMode)
 		h.logger.Info("Agent配置已更新")
 	}
 
