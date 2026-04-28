@@ -303,6 +303,8 @@
     "clearHistory": "清空历史",
     "cancelTask": "取消任务",
     "viewConversation": "查看对话",
+    "viewVulnerabilities": "查看漏洞",
+    "viewVulnerabilitiesQueueTitle": "查看漏洞：打开漏洞管理并筛选本队列",
     "retryTask": "重试",
     "conversationIdLabel": "对话ID",
     "statusPending": "待执行",
@@ -1702,6 +1704,7 @@
   },
   "contextMenu": {
     "viewAttackChain": "查看攻击链",
+    "viewVulnerabilities": "查看漏洞",
     "downloadMarkdown": "下载 Markdown",
     "downloadMarkdownSummary": "简版",
     "downloadMarkdownFull": "完整版",

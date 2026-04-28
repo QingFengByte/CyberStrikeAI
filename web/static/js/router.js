@@ -1,19 +1,19 @@
 // 页面路由管理
 let currentPage = 'dashboard';
 
-/** 仅当停留在 chat 时保留 ?conversation= 等查询串，其它页面只使用 pageId */
+/** chat、漏洞管理页在切换时保留当前 hash 上的查询串（如 ?conversation= / ?conversation_id=） */
 function buildHashForPage(pageId) {
-    if (pageId !== 'chat') {
+    if (pageId !== 'chat' && pageId !== 'vulnerabilities') {
         return pageId;
     }
     const full = window.location.hash.slice(1);
     const parts = full.split('?');
     const curPage = parts[0];
     const q = parts.length > 1 ? parts.slice(1).join('?') : '';
-    if (curPage === 'chat' && q) {
-        return 'chat?' + q;
+    if (curPage === pageId && q) {
+        return pageId + '?' + q;
     }
-    return 'chat';
+    return pageId;
 }
 
 let chatConversationFromHashSeq = 0;

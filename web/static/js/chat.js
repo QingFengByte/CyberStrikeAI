@@ -6121,6 +6121,17 @@ async function downloadConversationMarkdownFromContext(includeToolDetails = fals
     closeContextMenu();
 }
 
+// 从上下文菜单跳转到漏洞管理，并按当前对话 ID 筛选
+function navigateToVulnerabilitiesForContextConversation() {
+    const convId = contextMenuConversationId;
+    if (!convId) {
+        closeContextMenu();
+        return;
+    }
+    closeContextMenu();
+    window.location.hash = 'vulnerabilities?conversation_id=' + encodeURIComponent(convId);
+}
+
 // 从上下文菜单删除对话
 function deleteConversationFromContext() {
     const convId = contextMenuConversationId;

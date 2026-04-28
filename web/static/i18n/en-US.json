@@ -303,6 +303,8 @@
     "clearHistory": "Clear history",
     "cancelTask": "Cancel task",
     "viewConversation": "View conversation",
+    "viewVulnerabilities": "View vulnerabilities",
+    "viewVulnerabilitiesQueueTitle": "View vulnerabilities: open management filtered to this queue",
     "retryTask": "Retry",
     "conversationIdLabel": "Conversation ID",
     "statusPending": "Pending",
@@ -1702,6 +1704,7 @@
   },
   "contextMenu": {
     "viewAttackChain": "View attack chain",
+    "viewVulnerabilities": "View vulnerabilities",
     "downloadMarkdown": "Download Markdown",
     "downloadMarkdownSummary": "Summary",
     "downloadMarkdownFull": "Full",

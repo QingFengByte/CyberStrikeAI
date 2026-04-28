@@ -531,6 +531,7 @@ function renderTaskItem(task, statusMap, isHistory = false) {
                         ${isHistory && completedText ? completedText : timeText}
                     </span>
                     ${canCancel ? `<button class="btn-secondary btn-small" onclick="cancelTask('${task.conversationId}', this)">` + _t('tasks.cancelTask') + `</button>` : ''}
+                    ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="navigateToVulnerabilitiesFromTasksPage('conversation', '${task.conversationId}')">` + _t('tasks.viewVulnerabilities') + `</button>` : ''}
                     ${task.conversationId ? `<button class="btn-secondary btn-small" onclick="viewConversation('${task.conversationId}')">` + _t('tasks.viewConversation') + `</button>` : ''}
                 </div>
             </div>
@@ -705,6 +706,17 @@ function viewConversation(conversationId) {
                 console.log('切换到对话页面，对话ID:', conversationId);
             }
         }, 500);
+    }
+}
+
+// 跳转漏洞管理并按对话 ID 或批量队列 ID 筛选（队列 ID 走 task_id，与列表筛选项一致）
+function navigateToVulnerabilitiesFromTasksPage(kind, id) {
+    if (!id) return;
+    const enc = encodeURIComponent(id);
+    if (kind === 'queue') {
+        window.location.hash = 'vulnerabilities?task_id=' + enc;
+    } else if (kind === 'conversation') {
+        window.location.hash = 'vulnerabilities?conversation_id=' + enc;
     }
 }
 
@@ -1134,6 +1146,8 @@ function renderBatchQueues() {
         const progress = stats.total > 0 ? Math.round((stats.completed + stats.failed + stats.cancelled) / stats.total * 100) : 0;
         // 允许删除待执行、已完成或已取消状态的队列
         const canDelete = queue.status === 'pending' || queue.status === 'completed' || queue.status === 'cancelled';
+        // 操作列常驻「查看漏洞」，不再使用 --no-actions 隐藏整列（否则无法从运行中队列跳转漏洞页）
+        const noActionsClass = '';
         
         const loadedRoles = batchQueuesState.loadedRoles || [];
         const roleIcon = getRoleIconForDisplay(queue.role, loadedRoles);
@@ -1157,7 +1171,6 @@ function renderBatchQueues() {
             : `<h4 class="batch-queue-card-title batch-queue-card-title--muted">${escapeHtml(_t('tasks.batchQueueUntitled'))}</h4>`;
         const doneCount = stats.completed + stats.failed + stats.cancelled;
 
-        const noActionsClass = canDelete ? '' : ' batch-queue-item--no-actions';
         return `
             <div class="batch-queue-item batch-queue-item--compact${cardMod}${noActionsClass}" data-queue-id="${queue.id}" onclick="showBatchQueueDetail('${queue.id}')">
                 <div class="batch-queue-item__inner batch-queue-item__inner--grid">
@@ -1182,7 +1195,8 @@ function renderBatchQueues() {
                         </div>
                     </div>
                     <div class="batch-queue-item__actions-col" onclick="event.stopPropagation();">
-                        ${canDelete ? `<button type="button" class="batch-queue-icon-btn" onclick="deleteBatchQueueFromList('${queue.id}')" title="${escapeHtml(_t('tasks.deleteQueue'))}" aria-label="${escapeHtml(_t('tasks.deleteQueue'))}"><svg class="batch-queue-icon-btn__svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>` : ''}
+                        <button type="button" class="batch-queue-icon-btn" onclick="navigateToVulnerabilitiesFromTasksPage('queue', '${queue.id}')" title="${escapeHtml(_t('tasks.viewVulnerabilitiesQueueTitle'))}" aria-label="${escapeHtml(_t('tasks.viewVulnerabilitiesQueueTitle'))}"><svg class="batch-queue-icon-btn__svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg></button>
+                        ${canDelete ? `<button type="button" class="batch-queue-icon-btn batch-queue-icon-btn--danger" onclick="deleteBatchQueueFromList('${queue.id}')" title="${escapeHtml(_t('tasks.deleteQueue'))}" aria-label="${escapeHtml(_t('tasks.deleteQueue'))}"><svg class="batch-queue-icon-btn__svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></svg></button>` : ''}
                     </div>
                 </div>
             </div>
