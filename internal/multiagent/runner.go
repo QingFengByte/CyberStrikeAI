@@ -585,6 +585,7 @@ func RunDeepAgent(
 		ToolInvokeNotify:        toolInvokeNotify,
 		DA:                      da,
 		ModelFacingTrace:        modelFacingTrace,
+		EinoCallbacks:           &ma.EinoCallbacks,
 		EmptyResponseMessage: "(Eino multi-agent orchestration completed but no assistant text was captured. Check process details or logs.) " +
 			"（Eino 多代理编排已完成，但未捕获到助手文本输出。请查看过程详情或日志。）",
 	}, baseMsgs)

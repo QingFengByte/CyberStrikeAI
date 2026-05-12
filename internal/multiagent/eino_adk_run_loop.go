@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"cyberstrike-ai/internal/agent"
+	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/einoobserve"
 	"cyberstrike-ai/internal/einomcp"
 	"cyberstrike-ai/internal/openai"
 
@@ -95,6 +97,9 @@ type einoADKRunLoopArgs struct {
 	// ModelFacingTrace 可选：由各 ChatModelAgent Handlers 链末尾中间件写入「即将送入模型」的消息快照；
 	// 非空时优先用于 LastAgentTraceInput 序列化，使续跑与 summarization/reduction 后的上下文一致。
 	ModelFacingTrace *modelFacingTraceHolder
+
+	// EinoCallbacks 可选：为 ADK Runner 注入 eino [callbacks] 全链路观测（见 internal/einoobserve）。
+	EinoCallbacks *config.MultiAgentEinoCallbacksConfig
 }
 
 func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs []adk.Message) (*RunResult, error) {
@@ -286,6 +291,16 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 				"einoRole":       einoRoleTag(agentTag),
 				"source":         "eino",
 			})
+		})
+	}
+
+	if args.EinoCallbacks != nil {
+		ctx = einoobserve.AttachAgentRunCallbacks(ctx, args.EinoCallbacks, einoobserve.Params{
+			Logger:           logger,
+			Progress:         progress,
+			ConversationID:   conversationID,
+			OrchMode:         orchMode,
+			OrchestratorName: orchestratorName,
 		})
 	}
 

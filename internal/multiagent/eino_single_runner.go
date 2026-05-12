@@ -247,6 +247,7 @@ func RunEinoSingleChatModelAgent(
 		ToolInvokeNotify:        toolInvokeNotify,
 		DA:                      chatAgent,
 		ModelFacingTrace:        modelFacingTrace,
+		EinoCallbacks:           &ma.EinoCallbacks,
 		EmptyResponseMessage: "(Eino ADK single-agent session completed but no assistant text was captured. Check process details or logs.) " +
 			"（Eino ADK 单代理会话已完成，但未捕获到助手文本输出。请查看过程详情或日志。）",
 	}, baseMsgs)
