@@ -319,7 +319,7 @@ func (h *ConfigHandler) GetConfig(c *gin.Context) {
 	}
 	multiPub := config.MultiAgentPublic{
 		Enabled:                      h.config.MultiAgent.Enabled,
-		RobotUseMultiAgent:           h.config.MultiAgent.RobotUseMultiAgent,
+		RobotDefaultAgentMode: config.NormalizeRobotAgentMode(h.config.MultiAgent),
 		BatchUseMultiAgent:           h.config.MultiAgent.BatchUseMultiAgent,
 		SubAgentCount:                subAgentCount,
 		Orchestration:                config.NormalizeMultiAgentOrchestration(h.config.MultiAgent.Orchestration),
@@ -779,8 +779,12 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 	// 多代理标量（sub_agents 等仍由 config.yaml 维护）
 	if req.MultiAgent != nil {
 		h.config.MultiAgent.Enabled = req.MultiAgent.Enabled
-		h.config.MultiAgent.RobotUseMultiAgent = req.MultiAgent.RobotUseMultiAgent
 		h.config.MultiAgent.BatchUseMultiAgent = req.MultiAgent.BatchUseMultiAgent
+		if mode := strings.TrimSpace(req.MultiAgent.RobotDefaultAgentMode); mode != "" {
+			h.config.MultiAgent.RobotDefaultAgentMode = mode
+		} else {
+			h.config.MultiAgent.RobotDefaultAgentMode = "react"
+		}
 		if req.MultiAgent.PlanExecuteLoopMaxIterations != nil {
 			h.config.MultiAgent.PlanExecuteLoopMaxIterations = *req.MultiAgent.PlanExecuteLoopMaxIterations
 		}
@@ -789,7 +793,7 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 		}
 		h.logger.Info("更新多代理配置",
 			zap.Bool("enabled", h.config.MultiAgent.Enabled),
-			zap.Bool("robot_use_multi_agent", h.config.MultiAgent.RobotUseMultiAgent),
+			zap.String("robot_default_agent_mode", config.NormalizeRobotAgentMode(h.config.MultiAgent)),
 			zap.Bool("batch_use_multi_agent", h.config.MultiAgent.BatchUseMultiAgent),
 			zap.Int("plan_execute_loop_max_iterations", h.config.MultiAgent.PlanExecuteLoopMaxIterations),
 			zap.Int("tool_search_always_visible_tools", len(h.config.MultiAgent.EinoMiddleware.ToolSearchAlwaysVisibleTools)),
@@ -1571,7 +1575,7 @@ func updateMultiAgentConfig(doc *yaml.Node, cfg config.MultiAgentConfig) {
 	root := doc.Content[0]
 	maNode := ensureMap(root, "multi_agent")
 	setBoolInMap(maNode, "enabled", cfg.Enabled)
-	setBoolInMap(maNode, "robot_use_multi_agent", cfg.RobotUseMultiAgent)
+	setStringInMap(maNode, "robot_default_agent_mode", config.NormalizeRobotAgentMode(cfg))
 	setBoolInMap(maNode, "batch_use_multi_agent", cfg.BatchUseMultiAgent)
 	setIntInMap(maNode, "plan_execute_loop_max_iterations", cfg.PlanExecuteLoopMaxIterations)
 	mwNode := ensureMap(maNode, "eino_middleware")
