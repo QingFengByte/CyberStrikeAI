@@ -662,6 +662,29 @@ function selectAgentMode(mode) {
 }
 
 async function initChatAgentModeFromConfig() {
+    const wrap = document.getElementById('agent-mode-wrapper');
+    const sel = document.getElementById('agent-mode-select');
+    if (!wrap || !sel) return;
+
+    // 先展示基础模式，避免首次登录时配置接口短暂失败导致入口被隐藏。
+    wrap.style.display = '';
+    let stored = localStorage.getItem(AGENT_MODE_STORAGE_KEY);
+    if (!(stored === CHAT_AGENT_MODE_REACT || chatAgentModeIsEinoSingle(stored) || chatAgentModeIsEino(stored))) {
+        stored = CHAT_AGENT_MODE_REACT;
+    }
+    sel.value = stored;
+    syncAgentModeFromValue(stored);
+    document.querySelectorAll('.agent-mode-option').forEach(function (el) {
+        const v = el.getAttribute('data-value');
+        if (v === 'deep' || v === 'plan_execute' || v === 'supervisor') {
+            el.style.display = 'none';
+        } else {
+            el.style.display = '';
+        }
+    });
+    restoreChatReasoningControlsFromStorage();
+    syncReasoningRowVisibility(stored);
+
     try {
         const r = await apiFetch('/api/config');
         if (!r.ok) return;
@@ -674,10 +697,6 @@ async function initChatAgentModeFromConfig() {
                 window.csaiHitlGlobalToolWhitelist = tw.slice();
             }
         }
-        const wrap = document.getElementById('agent-mode-wrapper');
-        const sel = document.getElementById('agent-mode-select');
-        if (!wrap || !sel) return;
-        wrap.style.display = '';
         document.querySelectorAll('.agent-mode-option').forEach(function (el) {
             const v = el.getAttribute('data-value');
             if (v === 'deep' || v === 'plan_execute' || v === 'supervisor') {
@@ -686,7 +705,6 @@ async function initChatAgentModeFromConfig() {
                 el.style.display = '';
             }
         });
-        let stored = localStorage.getItem(AGENT_MODE_STORAGE_KEY);
         stored = chatAgentModeNormalizeStored(stored, cfg);
         try {
             localStorage.setItem(AGENT_MODE_STORAGE_KEY, stored);
