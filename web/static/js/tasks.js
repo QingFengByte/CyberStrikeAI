@@ -812,12 +812,44 @@ const batchQueuesState = {
     totalPages: 1
 };
 
+async function refreshBatchProjectSelectOptions() {
+    const projectSelect = document.getElementById('batch-queue-project-id');
+    if (!projectSelect) return;
+
+    const noneLabel = _t('batchImportModal.projectNone');
+    projectSelect.innerHTML = `<option value="">${escapeHtml(noneLabel)}</option>`;
+
+    try {
+        const response = await apiFetch('/api/projects?status=active&limit=200');
+        if (!response.ok) {
+            throw new Error(_t('projects.loadProjectsFailed'));
+        }
+        const projects = await response.json();
+        const list = Array.isArray(projects) ? projects : [];
+        const activeProjectId = typeof getActiveProjectId === 'function' ? getActiveProjectId() || '' : '';
+
+        list.forEach((project) => {
+            if (!project || !project.id) return;
+            const option = document.createElement('option');
+            option.value = project.id;
+            option.textContent = project.name || project.id;
+            if (activeProjectId && project.id === activeProjectId) {
+                option.selected = true;
+            }
+            projectSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.warn('加载项目列表失败:', error);
+    }
+}
+
 // 显示新建任务模态框
 async function showBatchImportModal() {
     const modal = document.getElementById('batch-import-modal');
     const input = document.getElementById('batch-tasks-input');
     const titleInput = document.getElementById('batch-queue-title');
     const roleSelect = document.getElementById('batch-queue-role');
+    const projectSelect = document.getElementById('batch-queue-project-id');
     const agentModeSelect = document.getElementById('batch-queue-agent-mode');
     const scheduleModeSelect = document.getElementById('batch-queue-schedule-mode');
     const cronExprInput = document.getElementById('batch-queue-cron-expr');
@@ -830,6 +862,9 @@ async function showBatchImportModal() {
         // 重置角色选择为默认
         if (roleSelect) {
             roleSelect.value = '';
+        }
+        if (projectSelect) {
+            projectSelect.value = '';
         }
         if (agentModeSelect) {
             agentModeSelect.value = 'single';
@@ -872,6 +907,7 @@ async function showBatchImportModal() {
                 console.error('加载角色列表失败:', error);
             }
         }
+        await refreshBatchProjectSelectOptions();
         
         modal.style.display = 'block';
         input.focus();
@@ -935,6 +971,7 @@ async function createBatchQueue() {
     const input = document.getElementById('batch-tasks-input');
     const titleInput = document.getElementById('batch-queue-title');
     const roleSelect = document.getElementById('batch-queue-role');
+    const projectSelect = document.getElementById('batch-queue-project-id');
     const agentModeSelect = document.getElementById('batch-queue-agent-mode');
     const scheduleModeSelect = document.getElementById('batch-queue-schedule-mode');
     const cronExprInput = document.getElementById('batch-queue-cron-expr');
@@ -959,6 +996,7 @@ async function createBatchQueue() {
     
     // 获取角色（可选，空字符串表示默认角色）
     const role = roleSelect ? roleSelect.value || '' : '';
+    const projectId = projectSelect ? (projectSelect.value || '').trim() : '';
     const rawMode = agentModeSelect ? agentModeSelect.value : 'single';
     const agentMode = isBatchQueueAgentMode(rawMode) ? rawMode : 'single';
     const scheduleMode = scheduleModeSelect ? (scheduleModeSelect.value === 'cron' ? 'cron' : 'manual') : 'manual';
@@ -987,7 +1025,7 @@ async function createBatchQueue() {
                 scheduleMode,
                 cronExpr,
                 executeNow,
-                projectId: typeof getActiveProjectId === 'function' ? getActiveProjectId() || '' : '',
+                projectId,
             }),
         });
         

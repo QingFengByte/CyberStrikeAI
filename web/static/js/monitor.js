@@ -1271,6 +1271,22 @@ function mergeMcpExecutionIDLists(prev, next) {
     return out;
 }
 
+function formatEinoRunRetryMessage(message, data) {
+    const d = data && typeof data === 'object' ? data : {};
+    const base = String(message || '').trim();
+    const errRaw = d.error != null ? String(d.error).trim() : '';
+    if (!errRaw) {
+        return base;
+    }
+    const detailLabel = typeof window.t === 'function'
+        ? window.t('chat.einoRunRetryErrorDetail')
+        : '错误详情';
+    if (base && base.indexOf(errRaw) !== -1) {
+        return base;
+    }
+    return base ? (base + '\n' + detailLabel + '：' + errRaw) : (detailLabel + '：' + errRaw);
+}
+
 // 处理流式事件
 function handleStreamEvent(event, progressElement, progressId, 
                           getAssistantId, setAssistantId, getMcpIds, setMcpIds) {
@@ -1577,6 +1593,20 @@ function handleStreamEvent(event, progressElement, progressId,
                 message: event.message || (typeof window.t === 'function'
                     ? window.t('chat.einoStreamErrorMessage')
                     : '流式读取异常，系统将按策略重试或结束。'),
+                data: d
+            });
+            break;
+        }
+
+        case 'eino_run_retry': {
+            const d = event.data || {};
+            const title = typeof window.t === 'function'
+                ? window.t('chat.einoRunRetryTitle')
+                : '🔁 临时错误重试';
+            const msg = formatEinoRunRetryMessage(event.message, d);
+            addTimelineItem(timeline, 'warning', {
+                title: title,
+                message: msg,
                 data: d
             });
             break;
@@ -2966,6 +2996,11 @@ function addTimelineItem(timeline, type, options) {
                 ${escapeHtml(options.message || taskCancelledLabel)}
             </div>
         `;
+    } else if (type === 'warning' && options.message) {
+        const streamBody = typeof formatTimelineStreamBody === 'function'
+            ? formatTimelineStreamBody(options.message, options.data)
+            : options.message;
+        content += `<div class="timeline-item-content">${formatMarkdown(streamBody)}</div>`;
     } else if (type === 'progress' && options.message) {
         content += `<div class="timeline-item-content timeline-eino-trace"><pre class="tool-result">${escapeHtml(options.message)}</pre></div>`;
     } else if (type === 'user_interrupt_continue' && options.message) {

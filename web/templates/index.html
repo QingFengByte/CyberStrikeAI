@@ -3679,6 +3679,13 @@
                     <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.roleHint">选择一个角色，所有任务将使用该角色的配置（提示词和工具）执行。</div>
                 </div>
                 <div class="form-group">
+                    <label for="batch-queue-project-id" data-i18n="batchImportModal.project">所属项目</label>
+                    <select id="batch-queue-project-id" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.875rem;">
+                        <option value="" data-i18n="batchImportModal.projectNone">（未绑定）</option>
+                    </select>
+                    <div class="form-hint" style="margin-top: 4px;" data-i18n="batchImportModal.projectHint">可为队列绑定项目；留空则不绑定项目上下文。</div>
+                </div>
+                <div class="form-group">
                     <label for="batch-queue-agent-mode" data-i18n="batchImportModal.agentMode">代理模式</label>
                     <select id="batch-queue-agent-mode" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.875rem;">
                         <option value="single" data-i18n="chat.agentModeReactNative">原生 ReAct 模式</option>

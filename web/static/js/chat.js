@@ -2479,6 +2479,20 @@ function renderProcessDetails(messageId, processDetails) {
             itemTitle = agPx + execLine;
         } else if (eventType === 'eino_agent_reply') {
             itemTitle = agPx + '💬 ' + (typeof window.t === 'function' ? window.t('chat.einoAgentReplyTitle') : '子代理回复');
+        } else if (eventType === 'eino_run_retry') {
+            itemTitle = typeof window.t === 'function'
+                ? window.t('chat.einoRunRetryTitle')
+                : '🔁 临时错误重试';
+            const errRaw = data && data.error != null ? String(data.error).trim() : '';
+            if (errRaw) {
+                const detailLabel = typeof window.t === 'function'
+                    ? window.t('chat.einoRunRetryErrorDetail')
+                    : '错误详情';
+                if (!title || String(title).indexOf(errRaw) === -1) {
+                    const merged = title ? (String(title) + '\n' + detailLabel + '：' + errRaw) : (detailLabel + '：' + errRaw);
+                    detail.message = merged;
+                }
+            }
         } else if (eventType === 'knowledge_retrieval') {
             itemTitle = '📚 ' + (typeof window.t === 'function' ? window.t('chat.knowledgeRetrieval') : '知识检索');
         } else if (eventType === 'error') {
