@@ -131,7 +131,7 @@ async function refreshDashboard() {
             openVulnQuery('low'),
             // 拉取 MCP 工具的「配置总数」用于「能力总览」（区别于 monitor/stats 的「有调用记录」）。
             // 仅取 total 字段，page_size=1 减少传输；total 已涵盖内部 + 外部 MCP + 直接注册的工具。
-            fetchJson('/api/config/tools?page=1&page_size=1'),
+            fetchJson('/api/config/tools?page=1&page_size=1&include_external=false'),
             // HITL 待审批：用于「需要立即处理」告警条 + 推荐操作
             fetchJson('/api/hitl/pending'),
             // 通知摘要：since=0 拿最新一批，limit 控制大小；用于「最近事件」内联展示
@@ -1459,6 +1459,7 @@ function statusKey(s) {
     if (s === 'fixed' || s === 'closed' || s === 'resolved') return 'fixed';
     if (s === 'confirmed') return 'confirmed';
     if (s === 'false_positive' || s === 'false-positive' || s === 'fp') return 'fp';
+    if (s === 'ignored') return 'ignored';
     return 'open';
 }
 
@@ -1467,6 +1468,7 @@ function statusShortLabel(s) {
     if (k === 'fixed') return dt('dashboard.statusFixed', null, '已修复');
     if (k === 'confirmed') return dt('dashboard.statusConfirmed', null, '已确认');
     if (k === 'fp') return dt('dashboard.statusFalsePositive', null, '误报');
+    if (k === 'ignored') return dt('dashboard.statusIgnored', null, '已忽略');
     return dt('dashboard.statusOpen', null, '待处理');
 }
 

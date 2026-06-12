@@ -463,9 +463,10 @@ function formatVulnStatusBadge(status) {
         confirmed: 'vulnerabilityPage.statusConfirmed',
         fixed: 'vulnerabilityPage.statusFixed',
         false_positive: 'vulnerabilityPage.statusFalsePositive',
+        ignored: 'vulnerabilityPage.statusIgnored',
     };
     const label = labelMap[s] ? tp(labelMap[s]) : status || '—';
-    const cls = ['open', 'confirmed', 'fixed', 'false_positive'].includes(s) ? s : 'open';
+    const cls = ['open', 'confirmed', 'fixed', 'false_positive', 'ignored'].includes(s) ? s : 'open';
     return `<span class="status-badge status-${escapeHtml(cls)}">${escapeHtml(label)}</span>`;
 }
 

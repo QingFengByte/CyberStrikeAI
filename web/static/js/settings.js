@@ -442,8 +442,11 @@ let toolsSearchKeyword = '';
 // 工具状态筛选: '' = 全部, 'true' = 已启用, 'false' = 已停用
 let toolsStatusFilter = '';
 
+// 按外部 MCP 来源筛选（点击左侧卡片时设置）
+let toolsExternalMcpFilter = '';
+
 // 加载工具列表（分页）
-async function loadToolsList(page = 1, searchKeyword = '') {
+async function loadToolsList(page = 1, searchKeyword = '', options = {}) {
     // 等待 i18n 就绪，避免快速刷新时翻译函数未初始化导致显示占位符
     if (window.i18nReady) await window.i18nReady;
     const toolsList = document.getElementById('tools-list');
@@ -466,6 +469,12 @@ async function loadToolsList(page = 1, searchKeyword = '') {
         if (toolsStatusFilter !== '') {
             url += `&enabled=${toolsStatusFilter}`;
         }
+        if (options.refreshExternal) {
+            url += '&refresh_external=true';
+        }
+        if (toolsExternalMcpFilter) {
+            url += `&external_mcp=${encodeURIComponent(toolsExternalMcpFilter)}`;
+        }
         
         // 使用较短的超时时间（10秒），避免长时间等待
         const controller = new AbortController();
@@ -486,6 +495,7 @@ async function loadToolsList(page = 1, searchKeyword = '') {
             page: result.page || page,
             pageSize: result.page_size || pageSize,
             total: result.total || 0,
+            totalEnabled: result.total_enabled ?? 0,
             totalPages: result.total_pages || 1
         };
         
@@ -504,6 +514,8 @@ async function loadToolsList(page = 1, searchKeyword = '') {
         
         renderToolsList();
         renderToolsPagination();
+        renderExternalMcpFilterChip();
+        updateExternalMcpCardSelection();
     } catch (error) {
         console.error('加载工具列表失败:', error);
         if (toolsList) {
@@ -763,14 +775,101 @@ function scrollToExternalMCP(mcpName, event) {
     event.stopPropagation();
     const items = document.querySelectorAll('.external-mcp-item');
     for (const item of items) {
-        const h4 = item.querySelector('h4');
-        if (h4 && h4.textContent.includes(mcpName)) {
+        if (item.dataset.mcpName === mcpName) {
             item.scrollIntoView({ behavior: 'smooth', block: 'center' });
             item.classList.add('highlight');
             setTimeout(() => item.classList.remove('highlight'), 2000);
             return;
         }
     }
+}
+
+// 点击左侧外部 MCP 卡片，筛选并定位右侧工具列表
+async function scrollToExternalMCPTools(mcpName, event) {
+    if (event) {
+        if (event.target.closest('.external-mcp-item-actions, button, a, input, label')) {
+            return;
+        }
+        event.stopPropagation();
+    }
+
+    if (toolsExternalMcpFilter === mcpName) {
+        await clearExternalMcpFilter();
+        return;
+    }
+
+    toolsExternalMcpFilter = mcpName;
+    updateExternalMcpCardSelection();
+    renderExternalMcpFilterChip();
+    await loadToolsList(1, toolsSearchKeyword);
+
+    requestAnimationFrame(() => {
+        highlightExternalMcpTools(mcpName);
+    });
+}
+
+function highlightExternalMcpTools(mcpName) {
+    const toolsList = document.querySelector('.mcp-tools-panel .tools-list');
+    if (toolsList) {
+        toolsList.scrollTop = 0;
+    }
+
+    document.querySelectorAll('#tools-list .tool-item.highlight').forEach(el => {
+        el.classList.remove('highlight');
+    });
+
+    const selector = `#tools-list .tool-item[data-external-mcp="${CSS.escape(mcpName)}"]`;
+    const matchingTools = document.querySelectorAll(selector);
+    if (matchingTools.length === 0) {
+        return;
+    }
+
+    matchingTools[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    matchingTools.forEach(el => {
+        el.classList.add('highlight');
+        setTimeout(() => el.classList.remove('highlight'), 2000);
+    });
+}
+
+async function clearExternalMcpFilter() {
+    toolsExternalMcpFilter = '';
+    updateExternalMcpCardSelection();
+    renderExternalMcpFilterChip();
+    await loadToolsList(1, toolsSearchKeyword);
+}
+
+function updateExternalMcpCardSelection() {
+    document.querySelectorAll('.external-mcp-item').forEach(item => {
+        item.classList.toggle('selected', item.dataset.mcpName === toolsExternalMcpFilter);
+    });
+}
+
+function renderExternalMcpFilterChip() {
+    let chip = document.getElementById('tools-source-filter-chip');
+    const toolsActions = document.querySelector('.mcp-tools-panel .tools-actions');
+    if (!toolsActions) {
+        return;
+    }
+
+    if (!chip) {
+        chip = document.createElement('div');
+        chip.id = 'tools-source-filter-chip';
+        chip.className = 'tools-source-filter-chip';
+        toolsActions.appendChild(chip);
+    }
+
+    if (!toolsExternalMcpFilter) {
+        chip.style.display = 'none';
+        chip.innerHTML = '';
+        return;
+    }
+
+    const t = typeof window.t === 'function' ? window.t : (k) => k;
+    chip.style.display = 'inline-flex';
+    chip.innerHTML = `
+        <span>${t('mcp.filterBySource', { name: escapeHtml(toolsExternalMcpFilter) })}</span>
+        <button type="button" class="tools-source-filter-clear" onclick="clearExternalMcpFilter()" title="${escapeHtml(t('mcp.clearSourceFilter'))}">×</button>
+    `;
 }
 
 // 渲染工具列表分页控件
@@ -964,60 +1063,22 @@ async function updateToolsStats() {
                 return checkbox ? checkbox.checked : tool.enabled;
             }).length;
         } else {
-            // 没有搜索时，需要获取所有工具的状态
-            // 先使用全局状态映射和当前页的checkbox状态
-            const localStateMap = new Map();
-            
-            // 从当前页的checkbox获取状态（如果全局映射中没有）
-            allTools.forEach(tool => {
-                const toolKey = getToolKey(tool);
-                const savedState = toolStateMap.get(toolKey);
-                if (savedState !== undefined) {
-                    localStateMap.set(toolKey, savedState.enabled);
-                } else {
-                    const checkboxId = `tool-${toolKey.replace(/::/g, '--')}`;
-                    const checkbox = document.getElementById(checkboxId);
-                    if (checkbox) {
-                        localStateMap.set(toolKey, checkbox.checked);
-                    } else {
-                        // 如果checkbox不存在（不在当前页），使用工具原始状态
-                        localStateMap.set(toolKey, tool.enabled);
+            // 使用服务端统计，避免为统计翻页触发多次外部 MCP ListTools
+            totalEnabled = toolsPagination.totalEnabled ?? 0;
+            if (toolStateMap.size > 0) {
+                let delta = 0;
+                allTools.forEach(tool => {
+                    const toolKey = getToolKey(tool);
+                    const savedState = toolStateMap.get(toolKey);
+                    if (savedState === undefined) {
+                        return;
                     }
-                }
-            });
-            
-            // 如果总工具数大于当前页，需要获取所有工具的状态
-            if (totalTools > allTools.length) {
-                // 遍历所有页面获取完整状态
-                let page = 1;
-                let hasMore = true;
-                const pageSize = 100; // 使用较大的页面大小以减少请求次数
-                
-                while (hasMore && page <= 10) { // 限制最多10页，避免无限循环
-                    const url = `/api/config/tools?page=${page}&page_size=${pageSize}`;
-                    const pageResponse = await apiFetch(url);
-                    if (!pageResponse.ok) break;
-                    
-                    const pageResult = await pageResponse.json();
-                    pageResult.tools.forEach(tool => {
-                        // 优先使用全局状态映射，否则使用服务器返回的状态
-                        const toolKey = getToolKey(tool);
-                        if (!localStateMap.has(toolKey)) {
-                            const savedState = toolStateMap.get(toolKey);
-                            localStateMap.set(toolKey, savedState ? savedState.enabled : tool.enabled);
-                        }
-                    });
-                    
-                    if (page >= pageResult.total_pages) {
-                        hasMore = false;
-                    } else {
-                        page++;
+                    if (savedState.enabled !== tool.enabled) {
+                        delta += savedState.enabled ? 1 : -1;
                     }
-                }
+                });
+                totalEnabled = Math.max(0, totalEnabled + delta);
             }
-            
-            // 计算启用的工具数
-            totalEnabled = Array.from(localStateMap.values()).filter(enabled => enabled).length;
         }
     } catch (error) {
         console.warn('获取工具统计失败，使用当前页数据', error);
@@ -1750,6 +1811,13 @@ async function loadExternalMCPs() {
     }
 }
 
+async function reloadMcpToolsAfterExternalChange(refreshExternal = false) {
+    if (typeof loadToolsList === 'function') {
+        const page = (toolsPagination && toolsPagination.page) ? toolsPagination.page : 1;
+        await loadToolsList(page, toolsSearchKeyword, { refreshExternal });
+    }
+}
+
 // 轮询列表直到指定 MCP 的工具数量已更新（每秒拉一次，拿到即停，无固定延迟）
 // name 为 null 时仅按 maxAttempts 次数轮询，不判断 tool_count
 async function pollExternalMCPToolCount(name, maxAttempts = 10) {
@@ -1768,6 +1836,7 @@ async function pollExternalMCPToolCount(name, maxAttempts = 10) {
             console.warn('轮询工具数量失败:', e);
         }
     }
+    await reloadMcpToolsAfterExternalChange(true);
     if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
         window.refreshMentionTools();
     }
@@ -1802,8 +1871,15 @@ function renderExternalMCPList(servers) {
         const transport = server.config.type || server.config.transport || (server.config.command ? 'stdio' : 'http');
         const transportIcon = transport === 'stdio' ? '⚙️' : '🌐';
         
+        const hasTools = server.tool_count !== undefined && server.tool_count > 0;
+        const cardClickTitle = hasTools
+            ? escapeHtml(statusT('mcp.clickToViewTools', { name }))
+            : '';
+        const cardClass = hasTools ? 'external-mcp-item clickable' : 'external-mcp-item';
+        const selectedClass = toolsExternalMcpFilter === name ? ' selected' : '';
+
         html += `
-            <div class="external-mcp-item">
+            <div class="${cardClass}${selectedClass}" data-mcp-name="${escapeHtml(name)}"${hasTools ? ` onclick="scrollToExternalMCPTools('${escapeHtml(name)}', event)" title="${cardClickTitle}"` : ''}>
                 <div class="external-mcp-item-header">
                     <div class="external-mcp-item-info">
                         <h4>${transportIcon} ${escapeHtml(name)}${server.tool_count !== undefined && server.tool_count > 0 ? `<span class="tool-count-badge" title="${escapeHtml(statusT('mcp.toolCount'))}">🔧 ${server.tool_count}</span>` : ''}</h4>
@@ -1866,6 +1942,7 @@ function renderExternalMCPList(servers) {
     }
     html += '</div>';
     list.innerHTML = html;
+    updateExternalMcpCardSelection();
 }
 
 // 渲染外部MCP统计信息
@@ -2226,6 +2303,7 @@ async function toggleExternalMCP(name, currentStatus) {
                         }
                         // 轮询直到该 MCP 工具数量已更新（每秒拉一次，无固定延迟）
                         pollExternalMCPToolCount(name, 10);
+                        await reloadMcpToolsAfterExternalChange(true);
                         return;
                     }
                 }
@@ -2238,6 +2316,7 @@ async function toggleExternalMCP(name, currentStatus) {
         } else {
             // 停止操作，直接刷新
             await loadExternalMCPs();
+            await reloadMcpToolsAfterExternalChange(false);
             // 刷新对话界面的工具列表
             if (typeof window !== 'undefined' && typeof window.refreshMentionTools === 'function') {
                 window.refreshMentionTools();
@@ -2289,6 +2368,7 @@ async function pollExternalMCPStatus(name, maxAttempts = 30) {
                     }
                     // 轮询直到该 MCP 工具数量已更新（每秒拉一次，无固定延迟）
                     pollExternalMCPToolCount(name, 10);
+                    await reloadMcpToolsAfterExternalChange(true);
                     return;
                 } else if (status === 'error' || status === 'disconnected') {
                     // 连接失败，刷新列表并显示错误

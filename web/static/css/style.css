@@ -5596,6 +5596,66 @@ header {
     animation: mcpHighlight 2s ease-out;
 }
 
+.external-mcp-item.clickable {
+    cursor: pointer;
+}
+
+.external-mcp-item.selected {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 1px var(--accent-color);
+}
+
+.tool-item.highlight {
+    animation: mcpHighlight 2s ease-out;
+}
+
+.tools-source-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 10px;
+    border-radius: 999px;
+    background: rgba(var(--accent-rgb, 59, 130, 246), 0.12);
+    border: 1px solid var(--accent-color);
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    line-height: 1.2;
+}
+
+.tools-source-filter-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    margin: 0;
+    border: none !important;
+    border-radius: 0;
+    background: transparent !important;
+    box-shadow: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.tools-actions .tools-source-filter-clear {
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+.tools-source-filter-clear:hover,
+.tools-actions .tools-source-filter-clear:hover {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none;
+    color: var(--text-primary);
+}
+
 @keyframes mcpHighlight {
     0% { box-shadow: 0 0 0 3px var(--accent-color); border-color: var(--accent-color); }
     100% { box-shadow: none; border-color: var(--border-color); }
@@ -16636,6 +16696,12 @@ tr.mcp-stats-tool-row[data-tool-name]:focus-visible {
     border-color: rgba(148, 163, 184, 0.25);
 }
 
+.dashboard-recent-vuln-status.st-ignored {
+    background: rgba(108, 117, 125, 0.12);
+    color: #868e96;
+    border-color: rgba(108, 117, 125, 0.22);
+}
+
 @media (max-width: 720px) {
     .dashboard-recent-vuln-item {
         grid-template-columns: 56px minmax(0, 1fr) auto 8.25rem;
@@ -18708,6 +18774,11 @@ tr.mcp-stats-tool-row[data-tool-name]:focus-visible {
 .status-badge.status-false_positive {
     background: rgba(220, 53, 69, 0.1);
     color: #dc3545;
+}
+
+.status-badge.status-ignored {
+    background: rgba(108, 117, 125, 0.12);
+    color: #868e96;
 }
 
 .vulnerability-date {
