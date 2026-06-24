@@ -829,9 +829,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 	} else {
 		cmd = exec.CommandContext(ctx, shell, "-c", command)
 	}
-	applyDefaultTerminalEnv(cmd)
-	attachNonInteractiveStdin(cmd)
-	_ = prepareShellCmdSession(cmd)
+	ConfigureShellCmdForAgentExecute(cmd)
 
 	// 执行命令
 	e.logger.Info("执行系统命令",
@@ -860,8 +858,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 		} else {
 			pidCmd = exec.CommandContext(ctx, shell, "-c", pidCommand)
 		}
-		applyDefaultTerminalEnv(pidCmd)
-		_ = prepareShellCmdSession(pidCmd)
+		ConfigureShellCmdForAgentExecute(pidCmd)
 
 		// 获取stdout管道
 		stdout, err := pidCmd.StdoutPipe()
@@ -980,8 +977,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 			if workDir != "" {
 				cmd2.Dir = workDir
 			}
-			applyDefaultTerminalEnv(cmd2)
-			_ = prepareShellCmdSession(cmd2)
+			ConfigureShellCmdForAgentExecute(cmd2)
 			output, err = runCommandWithPTY(ctx, cmd2, cb)
 		}
 	} else {
@@ -994,8 +990,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 			if workDir != "" {
 				cmd2.Dir = workDir
 			}
-			applyDefaultTerminalEnv(cmd2)
-			_ = prepareShellCmdSession(cmd2)
+			ConfigureShellCmdForAgentExecute(cmd2)
 			output, err = runCommandWithPTY(ctx, cmd2, nil)
 		}
 	}
@@ -1009,7 +1004,7 @@ func (e *Executor) executeSystemCommand(ctx context.Context, args map[string]int
 			Content: []mcp.Content{
 				{
 					Type: "text",
-					Text: fmt.Sprintf("命令执行失败: %v\n输出: %s", err, string(output)),
+					Text: FormatCommandFailureFromErr(err, output),
 				},
 			},
 			IsError: true,

@@ -71,6 +71,27 @@ func TestExecuteSystemCommand_BackgroundDoesNotBlockOnChildStdout(t *testing.T) 
 	}
 }
 
+func TestExecuteSystemCommand_FailureFormat(t *testing.T) {
+	executor, _ := setupTestExecutor(t)
+	res, err := executor.executeSystemCommand(context.Background(), map[string]interface{}{
+		"command": "echo fail-msg >&2; exit 7",
+		"shell":   "sh",
+	})
+	if err != nil {
+		t.Fatalf("executeSystemCommand: %v", err)
+	}
+	if res == nil || !res.IsError {
+		t.Fatalf("expected IsError, got %+v", res)
+	}
+	text := res.Content[0].Text
+	if text != FormatCommandFailureResult(7, "fail-msg\n") && text != FormatCommandFailureResult(7, "fail-msg") {
+		t.Fatalf("unexpected failure text: %q", text)
+	}
+	if !strings.Contains(text, "exit status 7") || !strings.Contains(text, "fail-msg") {
+		t.Fatalf("unexpected failure text: %q", text)
+	}
+}
+
 func TestBuildCommandArgs_NmapSkipsEmptyOptionalFlags(t *testing.T) {
 	pos1 := 1
 	executor, _ := setupTestExecutor(t)
