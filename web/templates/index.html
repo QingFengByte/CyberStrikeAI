@@ -1929,14 +1929,14 @@
                                             data-i18n="vulnerabilityPage.searchKeyword" data-i18n-attr="placeholder" placeholder="搜索标题、描述、类型、目标…" />
                                     </label>
                                     <label class="vulnerability-filter-field vulnerability-filter-field--project">
-                                        <span class="sr-only">项目</span>
-                                        <select id="vulnerability-project-filter" title="按项目筛选" onchange="scheduleVulnerabilityFilterApply(true)">
-                                            <option value="">全部项目</option>
+                                        <span class="sr-only" data-i18n="vulnerabilityPage.detailProject">项目</span>
+                                        <select id="vulnerability-project-filter" data-i18n="vulnerabilityPage.filterByProject" data-i18n-attr="title" title="按项目筛选" onchange="scheduleVulnerabilityFilterApply(true)">
+                                            <option value="" data-i18n="vulnerabilityPage.allProjects">全部项目</option>
                                         </select>
                                     </label>
                                     <label class="vulnerability-filter-field vulnerability-filter-field--status">
                                         <span class="sr-only" data-i18n="vulnerabilityPage.status">状态</span>
-                                        <select id="vulnerability-status-filter" data-i18n-attr="title" title="状态">
+                                        <select id="vulnerability-status-filter" data-i18n="vulnerabilityPage.status" data-i18n-attr="title" title="状态">
                                             <option value="" data-i18n="knowledgePage.all">全部状态</option>
                                             <option value="open" data-i18n="vulnerabilityPage.statusOpen">待处理</option>
                                             <option value="confirmed" data-i18n="vulnerabilityPage.statusConfirmed">已确认</option>
