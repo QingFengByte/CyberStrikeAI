@@ -96,15 +96,28 @@ type MultiAgentConfig struct {
 	// OrchestratorInstructionSupervisor supervisor 主代理系统提示（transfer/exit 说明仍由运行追加）；非空且 agents/orchestrator-supervisor.md 正文为空或未存在时生效。
 	OrchestratorInstructionSupervisor string                `yaml:"orchestrator_instruction_supervisor,omitempty" json:"orchestrator_instruction_supervisor,omitempty"`
 	SubAgents                         []MultiAgentSubConfig `yaml:"sub_agents" json:"sub_agents"`
-	// SubAgentUserContextMaxRunes caps the user-context supplement appended to task descriptions for sub-agents.
-	// 0 (default) uses the built-in default of 2000 runes; negative value disables injection entirely.
+	// SubAgentUserContextMaxRunes caps user-context supplement for sub-agent task descriptions.
+	// 0 (default) preserves all user turns verbatim; >0 caps total runes; negative disables injection.
 	SubAgentUserContextMaxRunes int `yaml:"sub_agent_user_context_max_runes,omitempty" json:"sub_agent_user_context_max_runes,omitempty"`
+	// UserVerbatimAnchorMaxRunes injects all user turns verbatim into system prompt (survives summarization refresh).
+	// 0 (default) = no cap; >0 = total rune cap; negative disables anchor injection.
+	UserVerbatimAnchorMaxRunes int `yaml:"user_verbatim_anchor_max_runes,omitempty" json:"user_verbatim_anchor_max_runes,omitempty"`
 	// EinoSkills configures CloudWeGo Eino ADK skill middleware + optional local filesystem/execute on DeepAgent.
 	EinoSkills MultiAgentEinoSkillsConfig `yaml:"eino_skills,omitempty" json:"eino_skills,omitempty"`
 	// EinoMiddleware wires optional ADK middleware (patchtoolcalls, toolsearch, plantask, reduction) and Deep extras.
 	EinoMiddleware MultiAgentEinoMiddlewareConfig `yaml:"eino_middleware,omitempty" json:"eino_middleware,omitempty"`
 	// EinoCallbacks attaches CloudWeGo eino callbacks.InitCallbacks on ADK Runner context (structured logs + optional SSE trace).
 	EinoCallbacks MultiAgentEinoCallbacksConfig `yaml:"eino_callbacks,omitempty" json:"eino_callbacks,omitempty"`
+}
+
+// UserVerbatimAnchorMaxRunesEffective returns max runes for user verbatim anchor; 0 = unlimited; negative = disabled.
+func (c MultiAgentConfig) UserVerbatimAnchorMaxRunesEffective() int {
+	return c.UserVerbatimAnchorMaxRunes
+}
+
+// SubAgentUserContextMaxRunesEffective returns max runes for sub-agent task supplement; 0 = unlimited; negative = disabled.
+func (c MultiAgentConfig) SubAgentUserContextMaxRunesEffective() int {
+	return c.SubAgentUserContextMaxRunes
 }
 
 // MultiAgentEinoCallbacksConfig enables Eino unified callbacks on each ADK agent run (deep / plan_execute / supervisor / eino_single).

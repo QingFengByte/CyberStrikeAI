@@ -1170,6 +1170,23 @@ func (s *Server) CancelToolExecution(id string) bool {
 	return s.CancelToolExecutionWithNote(id, "")
 }
 
+// ActiveRunningExecutionIDs 返回当前进程内仍登记 cancel 的 executionId 快照。
+func (s *Server) ActiveRunningExecutionIDs() map[string]struct{} {
+	if s == nil {
+		return nil
+	}
+	s.runningCancelsMu.Lock()
+	defer s.runningCancelsMu.Unlock()
+	if len(s.runningCancels) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(s.runningCancels))
+	for id := range s.runningCancels {
+		out[id] = struct{}{}
+	}
+	return out
+}
+
 // initDefaultPrompts 初始化默认提示词模板
 func (s *Server) initDefaultPrompts() {
 	s.mu.Lock()

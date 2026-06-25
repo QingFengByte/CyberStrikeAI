@@ -288,6 +288,93 @@ func (db *DB) GetToolExecution(id string) (*mcp.ToolExecution, error) {
 	return &exec, nil
 }
 
+// CancelOrphanedRunningToolExecutions 将仍为 running 的记录批量标记为 cancelled（如进程重启后无对应执行协程）。
+func (db *DB) CancelOrphanedRunningToolExecutions(endTime time.Time, errMsg string) (int64, error) {
+	errMsg = strings.TrimSpace(errMsg)
+	if errMsg == "" {
+		errMsg = "执行已中断（服务重启或会话结束）"
+	}
+	query := `
+		UPDATE tool_executions
+		SET status = 'cancelled',
+		    error = ?,
+		    end_time = ?,
+		    duration_ms = MAX(0, CAST((julianday(?) - julianday(start_time)) * 86400000 AS INTEGER))
+		WHERE status = 'running'
+	`
+	res, err := db.Exec(query, errMsg, endTime, endTime)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// FinalizeStaleRunningToolExecutions 将「非活跃且超过 minAge」的 running 记录标记为 cancelled。
+// activeIDs 为当前进程内仍登记 cancel 的 executionId；不在集合内且已超时的视为孤儿记录。
+func (db *DB) FinalizeStaleRunningToolExecutions(endTime time.Time, minAge time.Duration, activeIDs map[string]struct{}, errMsg string) (int64, error) {
+	errMsg = strings.TrimSpace(errMsg)
+	if errMsg == "" {
+		errMsg = "执行已中断（会话已结束）"
+	}
+	if minAge < 0 {
+		minAge = 0
+	}
+	cutoff := endTime.Add(-minAge)
+	rows, err := db.Query(`
+		SELECT id, start_time FROM tool_executions
+		WHERE status = 'running' AND start_time <= ?
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	type staleRow struct {
+		id        string
+		startTime time.Time
+	}
+	var stale []staleRow
+	for rows.Next() {
+		var row staleRow
+		if err := rows.Scan(&row.id, &row.startTime); err != nil {
+			db.logger.Warn("读取 stale running 执行记录失败", zap.Error(err))
+			continue
+		}
+		if activeIDs != nil {
+			if _, active := activeIDs[row.id]; active {
+				continue
+			}
+		}
+		stale = append(stale, row)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(stale) == 0 {
+		return 0, nil
+	}
+
+	var affected int64
+	for _, row := range stale {
+		durationMs := endTime.Sub(row.startTime).Milliseconds()
+		if durationMs < 0 {
+			durationMs = 0
+		}
+		res, err := db.Exec(`
+			UPDATE tool_executions
+			SET status = 'cancelled', error = ?, end_time = ?, duration_ms = ?
+			WHERE id = ? AND status = 'running'
+		`, errMsg, endTime, durationMs, row.id)
+		if err != nil {
+			db.logger.Warn("更新 stale running 执行记录失败", zap.Error(err), zap.String("executionId", row.id))
+			continue
+		}
+		n, _ := res.RowsAffected()
+		affected += n
+	}
+	return affected, nil
+}
+
 // DeleteToolExecution 删除工具执行记录
 func (db *DB) DeleteToolExecution(id string) error {
 	query := `DELETE FROM tool_executions WHERE id = ?`
