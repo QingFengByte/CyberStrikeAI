@@ -299,6 +299,8 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 
 	var toolResultSent sync.Map // toolCallID -> struct{}；ADK Tool 事件去重（权威正文来自 reduction 处理后的 agent 上下文）
 	tryEmitToolResultProgress := func(toolName, content, toolCallID string, isErr bool, agentName string) {
+		// 仅由 ADK schema.Tool 事件调用；MCP/execute 桥在 reduction 前的 ToolInvokeNotify 不得推送 tool_result，
+		// 否则全量输出会先占位并触发 toolResultSent 去重，导致 UI/监控展示与 agent 实际收到的截断正文不一致。
 		if progress == nil {
 			return
 		}
@@ -316,6 +318,7 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 			"isError":        isErr,
 			"result":         content,
 			"resultPreview":  preview,
+			"agentFacing":    true, // 与 reduction 后送入 ChatModel 的正文一致，供前端展示
 			"conversationId": conversationID,
 			"einoAgent":      agentName,
 			"einoRole":       einoRoleTag(agentName),
@@ -349,25 +352,6 @@ func runEinoADKAgentLoop(ctx context.Context, args *einoADKRunLoopArgs, baseMsgs
 			}
 		}
 		progress("tool_result", fmt.Sprintf("工具结果 (%s)", toolName), data)
-	}
-	if args.ToolInvokeNotify != nil {
-		args.ToolInvokeNotify.Set(func(toolCallID, toolName, einoAgent string, success bool, content string, invokeErr error) {
-			// Eino execute / MCP 桥在工具返回时 Fire；若 ADK schema.Tool 事件迟迟不到，此处立即推送
-			// tool_result 解除 UI「执行中」。tryEmitToolResultProgress 经 toolResultSent 去重，ADK 晚到不重复。
-			isErr := !success || invokeErr != nil
-			body := einoToolResultBody(content)
-			if einoToolResultIsError(toolName, content) {
-				isErr = true
-			}
-			if tail := friendlyEinoExecuteInvokeTail(invokeErr); tail != "" {
-				if body == "" {
-					body = tail
-				} else if !strings.Contains(body, tail) {
-					body = strings.TrimSpace(body) + "\n\n" + tail
-				}
-			}
-			tryEmitToolResultProgress(toolName, body, toolCallID, isErr, einoAgent)
-		})
 	}
 
 	if args.EinoCallbacks != nil {
