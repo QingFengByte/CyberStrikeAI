@@ -409,9 +409,9 @@ func TestSanitizeSystemContentForTranscript_BestPractice(t *testing.T) {
 		"需要写入请使用 upsert_project_fact。",
 		project.FactIndexSectionEndMarker,
 		"",
-		"# Skills System",
-		"**How to Use Skills**",
-		"Remember: Skills make you more capable",
+		transcriptSkillsSystemMarker,
+		"**如何使用 Skill（技能）（渐进式展示）：**",
+		"记住：Skill 让你更加强大和稳定",
 	}, "\n")
 
 	out := sanitizeSystemContentForTranscript(system)
@@ -421,7 +421,7 @@ func TestSanitizeSystemContentForTranscript_BestPractice(t *testing.T) {
 	if strings.Contains(out, "- nmap") || strings.Contains(out, "高强度扫描要求") {
 		t.Fatalf("static persona should be stripped: %q", out)
 	}
-	if strings.Contains(out, "# Skills System") || strings.Contains(out, "How to Use Skills") {
+	if strings.Contains(out, transcriptSkillsSystemMarker) || strings.Contains(out, "如何使用 Skill") {
 		t.Fatalf("skills boilerplate should be stripped: %q", out)
 	}
 	if !strings.Contains(out, transcriptStaticSystemOmitNote) {
@@ -435,7 +435,7 @@ func TestSanitizeSystemContentForTranscript_BestPractice(t *testing.T) {
 func TestFormatSummarizationTranscript_OmitsBloatedSystem(t *testing.T) {
 	t.Parallel()
 	msgs := []adk.Message{
-		schema.SystemMessage("以下是当前会话绑定的工具名称索引\n- nmap\n\n你是CyberStrikeAI\n" + project.FactIndexSectionStartMarker + "\n## 项目黑板索引（project: p1, id: x）\n（暂无事实）\n" + project.FactIndexSectionEndMarker + "\n# Skills System\nboiler"),
+		schema.SystemMessage("以下是当前会话绑定的工具名称索引\n- nmap\n\n你是CyberStrikeAI\n" + project.FactIndexSectionStartMarker + "\n## 项目黑板索引（project: p1, id: x）\n（暂无事实）\n" + project.FactIndexSectionEndMarker + "\n" + transcriptSkillsSystemMarker + "\nboiler"),
 		schema.UserMessage("hello"),
 		schema.AssistantMessage("reply", nil),
 	}

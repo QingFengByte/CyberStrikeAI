@@ -20,7 +20,9 @@ const (
 	transcriptStaticSystemOmitNote = "[static system prompt omitted — unchanged in live context after compaction]"
 	transcriptToolIndexStartMarker   = "以下是当前会话绑定的工具名称索引"
 	transcriptPersonaStartMarker     = "你是CyberStrikeAI"
-	transcriptSkillsSystemMarker     = "# Skills System"
+	// ADK LanguageChinese injects skill middleware prompt with this header (see eino adk/middlewares/skill/prompt.go).
+	transcriptSkillsSystemMarker        = "# Skill 系统"
+	transcriptSkillsSystemMarkerEnglish = "# Skills System"
 )
 
 type transcriptToolCall struct {
@@ -86,11 +88,21 @@ func stripToolNamesIndexFromSystem(s string) string {
 }
 
 func stripSkillsSystemBoilerplate(s string) string {
-	idx := strings.Index(s, transcriptSkillsSystemMarker)
+	idx := indexFirstSubstring(s, transcriptSkillsSystemMarker, transcriptSkillsSystemMarkerEnglish)
 	if idx < 0 {
 		return strings.TrimSpace(s)
 	}
 	return strings.TrimSpace(s[:idx])
+}
+
+func indexFirstSubstring(s string, markers ...string) int {
+	first := -1
+	for _, m := range markers {
+		if i := strings.Index(s, m); i >= 0 && (first < 0 || i < first) {
+			first = i
+		}
+	}
+	return first
 }
 
 func extractProjectBlackboardSection(s string) string {
