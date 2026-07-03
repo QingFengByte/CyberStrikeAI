@@ -389,6 +389,18 @@ func (m *HITLManager) LoadConversationConfig(conversationID string) (*HITLReques
 	}, nil
 }
 
+func (m *HITLManager) HasConversationConfig(conversationID string) (bool, error) {
+	if strings.TrimSpace(conversationID) == "" {
+		return false, nil
+	}
+	var one int
+	err := m.db.QueryRow(`SELECT 1 FROM hitl_conversation_configs WHERE conversation_id = ? LIMIT 1`, conversationID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (m *HITLManager) waitDecision(ctx context.Context, p *pendingInterrupt, timeout time.Duration) (hitlDecision, error) {
 	defer func() {
 		m.mu.Lock()
@@ -427,12 +439,30 @@ func (h *AgentHandler) activateHITLForConversation(conversationID string, req *H
 		return
 	}
 	if req == nil {
-		cfg, err := h.hitlManager.LoadConversationConfig(conversationID)
+		cfg, err := h.loadHITLConversationConfig(conversationID)
 		if err == nil {
 			req = cfg
 		}
 	}
+	if req != nil && strings.TrimSpace(req.Reviewer) == "" {
+		req.Reviewer = h.hitlEffectiveDefaultReviewer()
+	}
 	h.hitlManager.ActivateConversation(conversationID, h.hitlRequestWithMergedConfigWhitelist(req))
+}
+
+func (h *AgentHandler) loadHITLConversationConfig(conversationID string) (*HITLRequest, error) {
+	cfg, err := h.hitlManager.LoadConversationConfig(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	has, err := h.hitlManager.HasConversationConfig(conversationID)
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		cfg.Reviewer = h.hitlEffectiveDefaultReviewer()
+	}
+	return cfg, nil
 }
 
 func (h *AgentHandler) waitHITLApproval(runCtx context.Context, cancelRun context.CancelCauseFunc, conversationID, assistantMessageID, toolName, toolCallID string, payload map[string]interface{}, sendEventFunc func(eventType, message string, data interface{})) (*hitlDecision, error) {
@@ -710,7 +740,7 @@ func (h *AgentHandler) GetHITLConversationConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "conversationId is required"})
 		return
 	}
-	cfg, err := h.hitlManager.LoadConversationConfig(conversationID)
+	cfg, err := h.loadHITLConversationConfig(conversationID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -729,6 +759,7 @@ func (h *AgentHandler) GetHITLConversationConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"conversationId":          conversationID,
 		"hitl":                    cfg,
+		"defaultReviewer":         h.hitlEffectiveDefaultReviewer(),
 		"hitlGlobalToolWhitelist": h.hitlConfigGlobalToolWhitelist(),
 	})
 }
@@ -741,6 +772,9 @@ func (h *AgentHandler) UpsertHITLConversationConfig(c *gin.Context) {
 	}
 	req.Mode = normalizeHitlMode(req.Mode)
 	req.Reviewer = normalizeHitlReviewer(req.Reviewer)
+	if strings.TrimSpace(req.Reviewer) == "" {
+		req.Reviewer = h.hitlEffectiveDefaultReviewer()
+	}
 	if err := h.hitlManager.SaveConversationConfig(req.ConversationID, &req.HITLRequest); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -769,7 +803,48 @@ type setHitlGlobalWhitelistReq struct {
 // GetHITLGlobalToolWhitelist 返回 config.yaml 中的全局免审批工具白名单。
 func (h *AgentHandler) GetHITLGlobalToolWhitelist(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
-		"toolWhitelist": h.hitlConfigGlobalToolWhitelist(),
+		"toolWhitelist":   h.hitlConfigGlobalToolWhitelist(),
+		"defaultReviewer": h.hitlEffectiveDefaultReviewer(),
+	})
+}
+
+type setHitlDefaultReviewerReq struct {
+	Reviewer string `json:"reviewer"`
+}
+
+// GetHITLDefaultReviewer 返回 config.yaml 中的全局默认审批方。
+func (h *AgentHandler) GetHITLDefaultReviewer(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"defaultReviewer": h.hitlEffectiveDefaultReviewer(),
+	})
+}
+
+// UpdateHITLDefaultReviewer 将全局默认审批方写入 config.yaml（未选会话时切换审批方）。
+func (h *AgentHandler) UpdateHITLDefaultReviewer(c *gin.Context) {
+	if h.hitlDefaultReviewerSaver == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "HITL 配置持久化不可用"})
+		return
+	}
+	var req setHitlDefaultReviewerReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	reviewer := normalizeHitlReviewer(req.Reviewer)
+	if err := h.hitlDefaultReviewerSaver.UpdateHitlDefaultReviewer(reviewer); err != nil {
+		h.logger.Warn("写入 HITL 默认审批方到 config.yaml 失败", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if h.config != nil {
+		h.config.Hitl.DefaultReviewer = reviewer
+	}
+	if h.audit != nil {
+		h.audit.RecordOK(c, "hitl", "default_reviewer_update", "HITL 全局默认审批方更新", "hitl_config", "default_reviewer", nil)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"ok":              true,
+		"defaultReviewer": reviewer,
 	})
 }
 

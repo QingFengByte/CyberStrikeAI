@@ -1802,8 +1802,21 @@ func updateHitlConfig(doc *yaml.Node, cfg config.HitlConfig) {
 	hitlNode := ensureMap(root, "hitl")
 	// flow 样式 [a, b, c] 单行展示，工具多时比块序列省行数
 	setFlowStringSliceInMap(hitlNode, "tool_whitelist", cfg.ToolWhitelist)
+	setStringInMap(hitlNode, "default_reviewer", cfg.EffectiveDefaultReviewer())
 	setStringInMap(hitlNode, "audit_agent_prompt", cfg.AuditAgentPrompt)
 	setStringInMap(hitlNode, "audit_agent_prompt_review_edit", cfg.AuditAgentPromptReviewEdit)
+}
+
+// UpdateHitlDefaultReviewer 更新全局默认审批方并写入 config.yaml。
+func (h *ConfigHandler) UpdateHitlDefaultReviewer(reviewer string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.config.Hitl.DefaultReviewer = config.HitlConfig{DefaultReviewer: reviewer}.EffectiveDefaultReviewer()
+	if err := h.saveConfig(); err != nil {
+		return err
+	}
+	h.logger.Info("HITL 全局默认审批方已写入配置文件", zap.String("default_reviewer", h.config.Hitl.DefaultReviewer))
+	return nil
 }
 
 // UpdateHitlAuditAgentStrategy 更新审批/审查编辑两套审计 Agent 提示词并写入 config.yaml。
