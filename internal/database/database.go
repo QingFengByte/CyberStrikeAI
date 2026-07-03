@@ -611,6 +611,8 @@ func (db *DB) initTables() error {
 		input_json TEXT,
 		output_json TEXT,
 		error TEXT,
+		pending_hitl_node_id TEXT,
+		pending_hitl_json TEXT,
 		started_at DATETIME NOT NULL,
 		finished_at DATETIME,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -847,6 +849,9 @@ func (db *DB) initTables() error {
 	if err := db.migrateWebshellConnectionsTable(); err != nil {
 		db.logger.Warn("迁移webshell_connections表失败", zap.Error(err))
 		// 不返回错误，允许继续运行
+	}
+	if err := db.migrateWorkflowRunsTable(); err != nil {
+		db.logger.Warn("迁移workflow_runs表失败", zap.Error(err))
 	}
 
 	if _, err := db.Exec(createIndexes); err != nil {
