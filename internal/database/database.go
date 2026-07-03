@@ -587,6 +587,51 @@ func (db *DB) initTables() error {
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);`
 
+	createWorkflowDefinitionsTable := `
+	CREATE TABLE IF NOT EXISTS workflow_definitions (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		description TEXT,
+		version INTEGER NOT NULL DEFAULT 1,
+		graph_json TEXT NOT NULL,
+		enabled INTEGER NOT NULL DEFAULT 1,
+		created_at DATETIME NOT NULL,
+		updated_at DATETIME NOT NULL
+	);`
+
+	createWorkflowRunsTable := `
+	CREATE TABLE IF NOT EXISTS workflow_runs (
+		id TEXT PRIMARY KEY,
+		workflow_id TEXT NOT NULL,
+		workflow_version INTEGER NOT NULL DEFAULT 1,
+		conversation_id TEXT,
+		project_id TEXT,
+		role_id TEXT,
+		status TEXT NOT NULL,
+		input_json TEXT,
+		output_json TEXT,
+		error TEXT,
+		started_at DATETIME NOT NULL,
+		finished_at DATETIME,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+	);`
+
+	createWorkflowNodeRunsTable := `
+	CREATE TABLE IF NOT EXISTS workflow_node_runs (
+		id TEXT PRIMARY KEY,
+		run_id TEXT NOT NULL,
+		node_id TEXT NOT NULL,
+		status TEXT NOT NULL,
+		input_json TEXT,
+		output_json TEXT,
+		error TEXT,
+		started_at DATETIME NOT NULL,
+		finished_at DATETIME,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
+	);`
+
 	// 创建索引
 	createIndexes := `
 	CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
@@ -645,6 +690,12 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_audit_logs_category ON audit_logs(category);
 	CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
 	CREATE INDEX IF NOT EXISTS idx_audit_logs_result ON audit_logs(result);
+	CREATE INDEX IF NOT EXISTS idx_workflow_definitions_updated_at ON workflow_definitions(updated_at);
+	CREATE INDEX IF NOT EXISTS idx_workflow_definitions_enabled ON workflow_definitions(enabled);
+	CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow ON workflow_runs(workflow_id);
+	CREATE INDEX IF NOT EXISTS idx_workflow_runs_conversation ON workflow_runs(conversation_id);
+	CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+	CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(run_id);
 	`
 
 	if _, err := db.Exec(createConversationsTable); err != nil {
@@ -728,6 +779,16 @@ func (db *DB) initTables() error {
 
 	if _, err := db.Exec(createAuditLogsTable); err != nil {
 		return fmt.Errorf("创建audit_logs表失败: %w", err)
+	}
+
+	for tableName, ddl := range map[string]string{
+		"workflow_definitions": createWorkflowDefinitionsTable,
+		"workflow_runs":        createWorkflowRunsTable,
+		"workflow_node_runs":   createWorkflowNodeRunsTable,
+	} {
+		if _, err := db.Exec(ddl); err != nil {
+			return fmt.Errorf("创建%s表失败: %w", tableName, err)
+		}
 	}
 
 	for tableName, ddl := range map[string]string{
