@@ -678,14 +678,9 @@ async function followAgentRunAfterHitlDecision(conversationId) {
 }
 
 function renderHitlPendingList(items) {
-    const container = document.getElementById('hitl-pending-list');
-    if (!container) return;
     const list = Array.isArray(items) ? items : [];
-    if (!list.length) {
-        container.innerHTML = '<div class="empty-state">' + escapeHtml(hitlT('emptyState', 'No pending approvals')) + '</div>';
-        return;
-    }
-    container.innerHTML = list.map(function (item) {
+    if (!list.length) return '';
+    return list.map(function (item) {
             const payloadObj = hitlParsePayloadObject(item.payload || '');
             const payload = String(item.payload || '');
             const contextHtml = hitlRenderContextBlocks(payloadObj);
@@ -722,6 +717,86 @@ function renderHitlPendingList(items) {
         }).join('');
 }
 
+function hitlWorkflowPendingLabel(run) {
+    const pending = hitlParsePayloadObject(run.pending_hitl_json || run.pendingHitlJson || '');
+    const pendingHitl = pending.pendingHitl && typeof pending.pendingHitl === 'object' ? pending.pendingHitl : pending;
+    return pendingHitl.label || pendingHitl.nodeId || run.pending_hitl_node_id || run.pendingHitlNodeId || run.workflow_id || run.workflowId || run.id || '-';
+}
+
+function renderWorkflowHitlPendingList(runs) {
+    const list = Array.isArray(runs) ? runs : [];
+    if (!list.length) return '';
+    return list.map(function (run) {
+        const runId = String(run.id || '').trim();
+        const pending = hitlParsePayloadObject(run.pending_hitl_json || run.pendingHitlJson || '');
+        const pendingHitl = pending.pendingHitl && typeof pending.pendingHitl === 'object' ? pending.pendingHitl : pending;
+        const label = hitlWorkflowPendingLabel(run);
+        const prompt = String(pendingHitl.prompt || '').trim();
+        const convId = String(run.conversation_id || run.conversationId || '').trim();
+        const qRun = JSON.stringify(runId).replace(/"/g, '&quot;');
+        const qConv = JSON.stringify(convId).replace(/"/g, '&quot;');
+        const workflowLabel = hitlT('workflowPendingTitle', 'Workflow approval');
+        const openChatLabel = hitlT('openConversation', 'Open conversation');
+        return (
+            '<div class="hitl-pending-item hitl-pending-item--workflow">' +
+            '<div class="hitl-pending-item-header">' +
+            '<div class="hitl-pending-item-title">' +
+            '<span class="hitl-tool-badge">' + escapeHtml(workflowLabel) + '</span>' +
+            '<span class="hitl-mode-tag hitl-mode-tag--approval">' + escapeHtml(label) + '</span>' +
+            '</div>' +
+            '</div>' +
+            '<div class="hitl-pending-meta">' + escapeHtml(hitlT('conversationLabel', 'Conversation:')) + ' ' + escapeHtml(convId || '-') + '</div>' +
+            (prompt ? ('<div class="hitl-input-help">' + escapeHtml(prompt) + '</div>') : '') +
+            '<div class="hitl-input-help">' + escapeHtml(hitlT('commentHelp', 'Comment (optional): briefly note the approval reason.')) + '</div>' +
+            '<input id="workflow-hitl-comment-' + escapeHtml(runId) + '" class="hitl-config-input hitl-inline-comment" type="text" placeholder="' + escapeHtml(hitlT('commentPlaceholder', 'e.g. allow read-only command')) + '">' +
+            '<div class="hitl-pending-actions">' +
+            (convId ? ('<button class="btn-secondary" onclick="openHitlConversation(' + qConv + ')">' + escapeHtml(openChatLabel) + '</button>') : '') +
+            '<button class="btn-secondary" onclick="submitWorkflowHitlDecisionFromPage(' + qRun + ', false, ' + qConv + ')">' + escapeHtml(hitlT('reject', 'Reject')) + '</button>' +
+            '<button class="btn-primary" onclick="submitWorkflowHitlDecisionFromPage(' + qRun + ', true, ' + qConv + ')">' + escapeHtml(hitlT('approve', 'Approve')) + '</button>' +
+            '</div>' +
+            '</div>'
+        );
+    }).join('');
+}
+
+async function submitWorkflowHitlDecisionFromPage(runId, approved, conversationId) {
+    const rid = String(runId || '').trim();
+    if (!rid) return;
+    const commentEl = document.getElementById('workflow-hitl-comment-' + rid);
+    const comment = commentEl ? String(commentEl.value || '').trim() : '';
+    try {
+        if (typeof window.submitWorkflowHitlDecision === 'function') {
+            await window.submitWorkflowHitlDecision(rid, approved, comment);
+        } else {
+            const resp = await hitlApiFetch('/api/workflows/runs/' + encodeURIComponent(rid) + '/resume', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ approved: !!approved, comment: comment })
+            });
+            const body = await resp.json().catch(function () { return {}; });
+            if (!resp.ok) throw new Error((body && body.error) ? body.error : 'submit failed');
+        }
+        if (conversationId && typeof followAgentRunAfterHitlDecision === 'function') {
+            await followAgentRunAfterHitlDecision(conversationId);
+        }
+        await refreshHitlPending();
+    } catch (e) {
+        alert((e && e.message) ? e.message : hitlT('submitFailed', 'Submit failed'));
+    }
+}
+
+function openHitlConversation(conversationId) {
+    const cid = String(conversationId || '').trim();
+    if (!cid) return;
+    if (typeof switchPage === 'function') {
+        switchPage('chat');
+    }
+    if (typeof loadConversation === 'function') {
+        loadConversation(cid);
+    }
+}
+
 async function refreshHitlPending() {
     const container = document.getElementById('hitl-pending-list');
     if (!container) return;
@@ -739,7 +814,27 @@ async function refreshHitlPending() {
         }
         const data = await resp.json();
         const items = Array.isArray(data.items) ? data.items : [];
-        hitlPendingTotal = typeof data.total === 'number' ? data.total : items.length;
+        let workflowRuns = [];
+        try {
+            const wfResp = await hitlApiFetch('/api/workflows/runs/pending', { credentials: 'same-origin' });
+            if (wfResp.ok) {
+                const wfData = await wfResp.json().catch(function () { return {}; });
+                workflowRuns = Array.isArray(wfData.runs) ? wfData.runs : [];
+            }
+        } catch (wfErr) {
+            console.warn('fetch workflow pending runs failed', wfErr);
+        }
+        const searchQ = q && q.value.trim() ? q.value.trim().toLowerCase() : '';
+        if (searchQ) {
+            workflowRuns = workflowRuns.filter(function (run) {
+                const conv = String(run.conversation_id || run.conversationId || '').toLowerCase();
+                const wfId = String(run.workflow_id || run.workflowId || '').toLowerCase();
+                const runId = String(run.id || '').toLowerCase();
+                const label = hitlWorkflowPendingLabel(run).toLowerCase();
+                return conv.indexOf(searchQ) >= 0 || wfId.indexOf(searchQ) >= 0 || runId.indexOf(searchQ) >= 0 || label.indexOf(searchQ) >= 0;
+            });
+        }
+        hitlPendingTotal = (typeof data.total === 'number' ? data.total : items.length) + workflowRuns.length;
         const maxPage = Math.max(1, Math.ceil(hitlPendingTotal / hitlPendingPageSize));
         if (hitlPendingPage > maxPage) {
             hitlPendingPage = maxPage;
@@ -753,7 +848,13 @@ async function refreshHitlPending() {
         }
         hitlPendingCache = items;
         hitlPendingLoaded = true;
-        renderHitlPendingList(items);
+        const workflowHtml = renderWorkflowHitlPendingList(workflowRuns);
+        const toolHtml = items.length ? renderHitlPendingList(items) : '';
+        if (!workflowHtml && !toolHtml) {
+            container.innerHTML = '<div class="empty-state">' + escapeHtml(hitlT('emptyState', 'No pending approvals')) + '</div>';
+        } else {
+            container.innerHTML = workflowHtml + (workflowHtml && toolHtml ? '<div class="hitl-pending-section-divider"></div>' : '') + (toolHtml || '');
+        }
         renderHitlPendingPagination();
     } catch (e) {
         hitlPendingLoaded = false;
@@ -1325,7 +1426,7 @@ function refreshHitlLogsI18n() {
 
 function refreshHitlPendingI18n() {
     if (!document.getElementById('hitl-pending-list') || !hitlPendingLoaded) return;
-    renderHitlPendingList(hitlPendingCache);
+    refreshHitlPending();
 }
 
 function refreshHitlI18n() {
@@ -1501,6 +1602,8 @@ window.onHitlLogsPageSizeChange = onHitlLogsPageSizeChange;
 window.onHitlPendingPageSizeChange = onHitlPendingPageSizeChange;
 window.submitHitlDecision = submitHitlDecision;
 window.submitHitlDecisionWithPayload = submitHitlDecisionWithPayload;
+window.submitWorkflowHitlDecisionFromPage = submitWorkflowHitlDecisionFromPage;
+window.openHitlConversation = openHitlConversation;
 window.dismissHitlItem = dismissHitlItem;
 window.followAgentRunAfterHitlDecision = followAgentRunAfterHitlDecision;
 

@@ -1921,6 +1921,24 @@ function handleStreamEvent(event, progressElement, progressId,
             break;
         }
 
+        case 'workflow_hitl_resumed': {
+            addTimelineItem(timeline, 'workflow_hitl_resumed', {
+                title: '✅ 审批已通过',
+                message: event.message || '人工审批已通过，继续执行',
+                data: event.data || {}
+            });
+            break;
+        }
+
+        case 'workflow_hitl_rejected': {
+            addTimelineItem(timeline, 'workflow_hitl_rejected', {
+                title: '❌ 审批已拒绝',
+                message: event.message || '',
+                data: event.data || {}
+            });
+            break;
+        }
+
         case 'workflow_paused': {
             addTimelineItem(timeline, 'workflow_paused', {
                 title: '⏸️ 工作流已暂停',
@@ -2687,6 +2705,16 @@ function handleStreamEvent(event, progressElement, progressId,
             break;
             
         case 'done':
+            if (event.data && event.data.workflowStatus === 'awaiting_hitl') {
+                const waitingTitle = document.querySelector(`#${progressId} .progress-title`);
+                if (waitingTitle) {
+                    waitingTitle.textContent = '⏸️ ' + (typeof window.t === 'function' ? window.t('chat.workflowAwaitingApproval') : '工作流等待审批');
+                }
+                if (progressTaskState.has(progressId)) {
+                    finalizeProgressTask(progressId, typeof window.t === 'function' ? window.t('chat.workflowAwaitingApproval') : '等待审批');
+                }
+                break;
+            }
             // 清理流式输出状态
             responseStreamStateByProgressId.delete(progressId);
             mainIterationStateByProgressId.delete(String(progressId));
@@ -2911,6 +2939,11 @@ function renderInlineWorkflowHitlApproval(itemId, data) {
                 setBusy(false);
                 return;
             }
+            if (body && body.streamResuming) {
+                statusEl.textContent = approved ? '已通过，工作流继续执行中…' : '已拒绝';
+                panel.classList.add('hitl-inline-done');
+                return;
+            }
             statusEl.textContent = approved ? '已通过，工作流继续执行' : '已拒绝';
             panel.classList.add('hitl-inline-done');
         } catch (e) {
@@ -2922,6 +2955,136 @@ function renderInlineWorkflowHitlApproval(itemId, data) {
     approveBtn.onclick = function () { submit(true); };
     rejectBtn.onclick = function () { submit(false); };
 }
+
+function parseWorkflowHitlPendingJSON(raw) {
+    if (!raw) return {};
+    if (typeof raw === 'object') return raw;
+    try {
+        const o = JSON.parse(String(raw));
+        return o && typeof o === 'object' ? o : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function workflowHitlDataFromRun(run) {
+    if (!run) return null;
+    const runId = run.id || run.workflowRunId || run.workflow_run_id;
+    if (!runId) return null;
+    const pending = parseWorkflowHitlPendingJSON(run.pending_hitl_json || run.pendingHitlJson || run.pendingHitlJSON);
+    const pendingHitl = pending.pendingHitl && typeof pending.pendingHitl === 'object' ? pending.pendingHitl : pending;
+    return {
+        workflowRunId: String(runId),
+        nodeId: pendingHitl.nodeId || run.pending_hitl_node_id || run.pendingHitlNodeId || '',
+        label: pendingHitl.label || pendingHitl.nodeId || run.pending_hitl_node_id || run.pendingHitlNodeId || runId,
+        prompt: pendingHitl.prompt || '',
+        conversationId: run.conversation_id || run.conversationId || ''
+    };
+}
+
+function findWorkflowHitlTimelineItem(detailsContainer, runId) {
+    if (!detailsContainer || !runId) return null;
+    const rid = String(runId).trim();
+    const byRun = detailsContainer.querySelector('[data-workflow-run-id="' + hitlEscapeAttrSelector(rid) + '"]');
+    if (byRun) return byRun;
+    const items = detailsContainer.querySelectorAll('.timeline-item-workflow_hitl_waiting');
+    for (let i = items.length - 1; i >= 0; i--) {
+        const el = items[i];
+        if (!el.querySelector('.workflow-hitl-inline-approval.hitl-inline-done')) {
+            return el;
+        }
+    }
+    return items.length ? items[items.length - 1] : null;
+}
+
+/**
+ * 刷新或切换会话后：根据 workflow_runs(awaiting_hitl) 恢复工作流内联审批入口。
+ */
+async function restoreWorkflowHitlInlineForConversation(conversationId) {
+    if (!conversationId || typeof apiFetch !== 'function') return;
+    if (typeof window.currentConversationId === 'string' && window.currentConversationId !== conversationId) {
+        return;
+    }
+    try {
+        const resp = await apiFetch('/api/workflows/runs/pending?conversationId=' + encodeURIComponent(conversationId));
+        if (!resp.ok) return;
+        const data = await resp.json().catch(function () { return {}; });
+        const runs = Array.isArray(data.runs) ? data.runs : [];
+        if (!runs.length) return;
+
+        let msgEl = document.querySelector('#chat-messages [data-backend-message-id]');
+        const nodes = document.querySelectorAll('#chat-messages .message.assistant');
+        for (let i = nodes.length - 1; i >= 0; i--) {
+            if (nodes[i] && nodes[i].dataset && nodes[i].dataset.backendMessageId) {
+                msgEl = nodes[i];
+                break;
+            }
+        }
+        if (!msgEl || !msgEl.id) return;
+        const clientMsgId = msgEl.id;
+        const backendMsgId = msgEl.dataset.backendMessageId;
+        const detailsContainer = document.getElementById('process-details-' + clientMsgId);
+        if (!detailsContainer) return;
+
+        if (detailsContainer.dataset.lazyNotLoaded === '1' && detailsContainer.dataset.loaded !== '1') {
+            try {
+                detailsContainer.dataset.loading = '1';
+                if (typeof loadProcessDetailsPaginated === 'function') {
+                    await loadProcessDetailsPaginated(clientMsgId, backendMsgId);
+                } else if (typeof apiFetch === 'function' && backendMsgId) {
+                    const res = await apiFetch('/api/messages/' + encodeURIComponent(backendMsgId) + '/process-details');
+                    const j = await res.json().catch(function () { return {}; });
+                    if (res.ok && typeof renderProcessDetails === 'function') {
+                        renderProcessDetails(clientMsgId, (j && Array.isArray(j.processDetails)) ? j.processDetails : []);
+                    }
+                }
+            } catch (e) {
+                console.error('加载过程详情失败（工作流 HITL 恢复）:', e);
+            } finally {
+                detailsContainer.dataset.loading = '0';
+            }
+        }
+
+        expandProcessDetailsTimeline(clientMsgId);
+
+        for (let i = 0; i < runs.length; i++) {
+            const hitlData = workflowHitlDataFromRun(runs[i]);
+            if (!hitlData) continue;
+            let hitlItemEl = findWorkflowHitlTimelineItem(detailsContainer, hitlData.workflowRunId);
+            if (!hitlItemEl) {
+                const timeline = detailsContainer.querySelector('.progress-timeline');
+                if (timeline && typeof addTimelineItem === 'function') {
+                    const itemId = addTimelineItem(timeline, 'workflow_hitl_waiting', {
+                        title: '🧑‍⚖️ 工作流等待审批',
+                        message: hitlData.label || '',
+                        data: hitlData
+                    });
+                    hitlItemEl = document.getElementById(itemId);
+                }
+            }
+            if (hitlItemEl && hitlItemEl.id) {
+                renderInlineWorkflowHitlApproval(hitlItemEl.id, hitlData);
+            }
+        }
+    } catch (e) {
+        console.error('restoreWorkflowHitlInlineForConversation failed', e);
+    }
+}
+
+window.restoreWorkflowHitlInlineForConversation = restoreWorkflowHitlInlineForConversation;
+window.submitWorkflowHitlDecision = async function submitWorkflowHitlDecision(runId, approved, comment) {
+    const fetchFn = typeof apiFetch === 'function' ? apiFetch : fetch;
+    const response = await fetchFn('/api/workflows/runs/' + encodeURIComponent(String(runId)) + '/resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved: !!approved, comment: comment || '' })
+    });
+    const body = response && typeof response.json === 'function' ? await response.json() : null;
+    if (!response || !response.ok) {
+        throw new Error((body && body.error) ? body.error : '提交失败');
+    }
+    return body;
+};
 
 function hitlEscapeAttrSelector(val) {
     const s = String(val);
@@ -3045,6 +3208,9 @@ async function restoreHitlInlineForConversation(conversationId) {
             }
             if (!hitlItemEl) continue;
             renderInlineHitlApproval(hitlItemEl.id, hitlData);
+        }
+        if (typeof restoreWorkflowHitlInlineForConversation === 'function') {
+            await restoreWorkflowHitlInlineForConversation(conversationId);
         }
     } catch (e) {
         console.error('restoreHitlInlineForConversation failed', e);
@@ -3541,6 +3707,12 @@ function addTimelineItem(timeline, type, options) {
     }
     if (type === 'hitl_interrupt' && options.data && options.data.interruptId != null && String(options.data.interruptId).trim() !== '') {
         item.dataset.hitlInterruptId = String(options.data.interruptId).trim();
+    }
+    if (type === 'workflow_hitl_waiting' && options.data) {
+        const runId = options.data.workflowRunId || options.data.workflow_run_id;
+        if (runId != null && String(runId).trim() !== '') {
+            item.dataset.workflowRunId = String(runId).trim();
+        }
     }
     if (type === 'tool_result' && options.data) {
         const d = options.data;

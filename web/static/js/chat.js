@@ -2707,14 +2707,21 @@ function finishProcessDetailsRender(messageElement, processDetails, isLazyNotLoa
     }
     
     const hasPendingHitlInDetails = processDetails.some(d => d && d.eventType === 'hitl_interrupt');
+    const hasPendingWorkflowHitl = processDetails.some(d => d && d.eventType === 'workflow_hitl_waiting');
     const hasErrorOrCancelled = processDetails.some(d => 
         d.eventType === 'error' || d.eventType === 'cancelled'
     );
-    if (hasErrorOrCancelled && !hasPendingHitlInDetails) {
+    if (hasErrorOrCancelled && !hasPendingHitlInDetails && !hasPendingWorkflowHitl) {
         timeline.classList.remove('expanded');
         const processDetailBtn = messageElement.querySelector('.process-detail-btn');
         if (processDetailBtn) {
             processDetailBtn.innerHTML = '<span>' + (typeof window.t === 'function' ? window.t('chat.expandDetail') : '展开详情') + '</span>';
+        }
+    }
+    if (hasPendingWorkflowHitl && messageElement && messageElement.id) {
+        const convId = typeof window.currentConversationId === 'string' ? window.currentConversationId : '';
+        if (convId && typeof window.restoreWorkflowHitlInlineForConversation === 'function') {
+            window.restoreWorkflowHitlInlineForConversation(convId);
         }
     }
 }
