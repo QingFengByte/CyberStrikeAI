@@ -1,6 +1,18 @@
 (function () {
     'use strict';
 
+    function _t(key, opts) {
+        if (typeof window.t === 'function') {
+            try {
+                var translated = window.t(key, opts);
+                if (typeof translated === 'string' && translated && translated !== key) {
+                    return translated;
+                }
+            } catch (e) { /* ignore */ }
+        }
+        return key;
+    }
+
     let workflows = [];
     let currentWorkflowId = '';
     let cy = null;
@@ -12,15 +24,24 @@
     let workflowToolOptions = [];
     let workflowToolsLoaded = false;
 
-    const NODE_LABELS = {
-        start: '开始',
-        tool: '工具',
-        agent: 'Agent',
-        condition: '条件',
-        hitl: '审批',
-        output: '输出',
-        end: '结束'
+    const KNOWN_NODE_LABELS = {
+        start: ['开始', 'Start'],
+        tool: ['工具', 'Tool'],
+        agent: ['Agent'],
+        condition: ['条件', 'Condition'],
+        hitl: ['审批', 'Approval'],
+        output: ['输出', 'Output'],
+        end: ['结束', 'End']
     };
+    const KNOWN_EDGE_LABELS = {
+        yes: ['是', 'Yes'],
+        no: ['否', 'No']
+    };
+
+    function wfNodeLabel(type) {
+        const key = type && KNOWN_NODE_LABELS[type] ? 'workflows.nodes.' + type : 'workflows.nodes.default';
+        return _t(key);
+    }
 
     const AGENT_MODES = ['eino_single', 'deep', 'plan_execute', 'supervisor'];
 
@@ -49,7 +70,7 @@
             case 'condition':
                 return { expression: '{{previous.output}} != ""' };
             case 'hitl':
-                return { prompt: '请审批该步骤是否继续执行', reviewer: 'human' };
+                return { prompt: _t('workflows.defaultHitlPrompt'), reviewer: 'human' };
             case 'output':
                 return { output_key: 'result', source: '{{previous.output}}' };
             case 'end':
@@ -85,7 +106,7 @@
             group: 'nodes',
             data: {
                 id: node.id || `node-${index + 1}`,
-                label: node.label || NODE_LABELS[node.type] || node.id || `节点 ${index + 1}`,
+                label: node.label || wfNodeLabel(node.type) || node.id || _t('workflows.nodeFallback', { n: index + 1 }),
                 type: node.type || 'tool',
                 config: configWithDefaults(node.type || 'tool', node.config)
             },
@@ -237,7 +258,7 @@
         const response = await apiFetch(`/api/workflows?includeDisabled=${includeDisabled ? 'true' : 'false'}`);
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            throw new Error(err.error || '加载工作流失败');
+            throw new Error(err.error || _t('workflows.loadFailed'));
         }
         const data = await response.json();
         workflows = data.workflows || [];
@@ -273,13 +294,13 @@
         const list = document.getElementById('workflow-list');
         if (!list) return;
         if (!workflows.length) {
-            list.innerHTML = '<div class="empty-state">暂无图编排流程</div>';
+            list.innerHTML = '<div class="empty-state">' + esc(_t('workflows.emptyList')) + '</div>';
             return;
         }
         list.innerHTML = workflows.map(wf => `
             <button type="button" class="workflow-list-item ${wf.id === currentWorkflowId ? 'is-active' : ''}" onclick="selectWorkflow(decodeURIComponent('${encodeURIComponent(wf.id)}'))">
                 <span class="workflow-list-title">${esc(wf.name || wf.id)}</span>
-                <span class="workflow-list-meta">${esc(wf.id)} · v${wf.version || 1} · ${wf.enabled ? '启用' : '禁用'}</span>
+                <span class="workflow-list-meta">${esc(wf.id)} · v${wf.version || 1} · ${wf.enabled ? esc(_t('workflows.statusEnabled')) : esc(_t('workflows.statusDisabled'))}</span>
             </button>
         `).join('');
     }
@@ -347,7 +368,7 @@
         if (!selectedElement) {
             empty.hidden = false;
             form.hidden = true;
-            if (title) title.textContent = '属性';
+            if (title) title.textContent = _t('workflows.properties');
             if (deleteBtn) deleteBtn.hidden = true;
             return;
         }
@@ -355,10 +376,10 @@
         selectedElement.select();
         empty.hidden = true;
         form.hidden = false;
-        if (title) title.textContent = selectedElement.isNode() ? '节点属性' : '连线属性';
+        if (title) title.textContent = selectedElement.isNode() ? _t('workflows.nodeProperties') : _t('workflows.edgeProperties');
         if (deleteBtn) {
             deleteBtn.hidden = false;
-            deleteBtn.textContent = selectedElement.isNode() ? '删除节点' : '删除连线';
+            deleteBtn.textContent = selectedElement.isNode() ? _t('workflows.deleteNode') : _t('workflows.deleteEdge');
         }
         const typeWrap = document.getElementById('workflow-prop-type-wrap');
         const label = document.getElementById('workflow-prop-label');
@@ -410,30 +431,30 @@
         if (!ele.isNode()) {
             const sourceType = ele.source().data('type') || '';
             const edgeHint = sourceType === 'condition'
-                ? '{{previous.matched}} == "true"（是）或 == "false"（否）'
-                : '例如: {{previous.output}} == "ok"';
+                ? _t('workflows.config.edgeConditionHintCondition')
+                : _t('workflows.config.edgeConditionHintExample');
             wrap.innerHTML = `
-                ${typedField('workflow-edge-condition', '连线条件', cfg.condition || '', edgeHint)}
-                ${sourceType === 'condition' ? '<p class="workflow-config-hint">从条件节点连出的第一条线默认为「是」分支，第二条为「否」分支；也可在此自定义条件。</p>' : ''}
+                ${typedField('workflow-edge-condition', _t('workflows.config.edgeCondition'), cfg.condition || '', edgeHint)}
+                ${sourceType === 'condition' ? '<p class="workflow-config-hint">' + esc(_t('workflows.config.edgeBranchHint')) + '</p>' : ''}
             `;
             return;
         }
         const type = ele.data('type') || 'tool';
         switch (type) {
             case 'start':
-                wrap.innerHTML = typedField('workflow-start-input-keys', '输入变量', cfg.input_keys, 'message, projectId');
+                wrap.innerHTML = typedField('workflow-start-input-keys', _t('workflows.config.inputKeys'), cfg.input_keys, 'message, projectId');
                 break;
             case 'tool':
                 wrap.innerHTML = `
                     <div class="form-group">
-                        <label for="workflow-tool-name">MCP 工具</label>
+                        <label for="workflow-tool-name">${esc(_t('workflows.config.mcpTool'))}</label>
                         <select id="workflow-tool-name" onchange="updateWorkflowTypedConfig()">
-                            <option value="">请选择工具</option>
-                            ${workflowToolOptions.map(tool => `<option value="${esc(tool.key)}" ${tool.key === cfg.tool_name ? 'selected' : ''}>${esc(tool.key)}${tool.enabled ? '' : '（未启用）'}</option>`).join('')}
+                            <option value="">${esc(_t('workflows.config.selectTool'))}</option>
+                            ${workflowToolOptions.map(tool => `<option value="${esc(tool.key)}" ${tool.key === cfg.tool_name ? 'selected' : ''}>${esc(tool.key)}${tool.enabled ? '' : esc(_t('workflows.config.toolDisabled'))}</option>`).join('')}
                         </select>
                     </div>
-                    ${typedTextarea('workflow-tool-arguments', '参数模板', cfg.arguments, '{"target":"{{inputs.target}}"}')}
-                    ${typedField('workflow-tool-timeout', '超时秒数', cfg.timeout_seconds, '可选')}
+                    ${typedTextarea('workflow-tool-arguments', _t('workflows.config.argumentsTemplate'), cfg.arguments, '{"target":"{{inputs.target}}"}')}
+                    ${typedField('workflow-tool-timeout', _t('workflows.config.timeoutSeconds'), cfg.timeout_seconds, _t('workflows.config.optional'))}
                 `;
                 if (!workflowToolsLoaded) {
                     loadWorkflowTools().then(() => {
@@ -444,27 +465,27 @@
             case 'agent':
                 wrap.innerHTML = `
                     <div class="form-group">
-                        <label for="workflow-agent-mode">Agent 模式</label>
+                        <label for="workflow-agent-mode">${esc(_t('workflows.config.agentMode'))}</label>
                         <select id="workflow-agent-mode" onchange="updateWorkflowTypedConfig()">
                             ${AGENT_MODES.map(mode => `<option value="${mode}" ${mode === cfg.agent_mode ? 'selected' : ''}>${mode}</option>`).join('')}
                         </select>
                     </div>
-                    ${typedField('workflow-agent-input-source', '输入来源', cfg.input_source, '{{previous.output}}')}
-                    ${typedTextarea('workflow-agent-instruction', '节点指令', cfg.instruction, '描述该节点要完成的任务')}
-                    ${typedField('workflow-agent-output-key', '输出变量名', cfg.output_key, 'agent_result')}
+                    ${typedField('workflow-agent-input-source', _t('workflows.config.inputSource'), cfg.input_source, '{{previous.output}}')}
+                    ${typedTextarea('workflow-agent-instruction', _t('workflows.config.nodeInstruction'), cfg.instruction, _t('workflows.config.instructionPlaceholder'))}
+                    ${typedField('workflow-agent-output-key', _t('workflows.config.outputKey'), cfg.output_key, 'agent_result')}
                 `;
                 break;
             case 'condition':
                 wrap.innerHTML = `
-                    ${typedField('workflow-condition-expression', '条件表达式', cfg.expression, '{{previous.output}} != ""')}
-                    <p class="workflow-config-hint">节点会计算 matched（true/false），由出边决定分支：第一条线为「是」，第二条为「否」；也可在连线上写 <code>{{previous.matched}} == "true"</code>。</p>
+                    ${typedField('workflow-condition-expression', _t('workflows.config.conditionExpression'), cfg.expression, '{{previous.output}} != ""')}
+                    <p class="workflow-config-hint">${_t('workflows.config.conditionHint')}</p>
                 `;
                 break;
             case 'hitl':
                 wrap.innerHTML = `
-                    ${typedTextarea('workflow-hitl-prompt', '审批提示', cfg.prompt, '请审批是否继续')}
+                    ${typedTextarea('workflow-hitl-prompt', _t('workflows.config.hitlPrompt'), cfg.prompt, _t('workflows.config.hitlPromptPlaceholder'))}
                     <div class="form-group">
-                        <label for="workflow-hitl-reviewer">审批方</label>
+                        <label for="workflow-hitl-reviewer">${esc(_t('workflows.config.hitlReviewer'))}</label>
                         <select id="workflow-hitl-reviewer" onchange="updateWorkflowTypedConfig()">
                             <option value="human" ${cfg.reviewer === 'human' ? 'selected' : ''}>human</option>
                             <option value="audit_agent" ${cfg.reviewer === 'audit_agent' ? 'selected' : ''}>audit_agent</option>
@@ -474,12 +495,12 @@
                 break;
             case 'output':
                 wrap.innerHTML = `
-                    ${typedField('workflow-output-key', '输出变量名', cfg.output_key, 'result')}
-                    ${typedField('workflow-output-source', '变量来源', cfg.source, '{{previous.output}}')}
+                    ${typedField('workflow-output-key', _t('workflows.config.outputKey'), cfg.output_key, 'result')}
+                    ${typedField('workflow-output-source', _t('workflows.config.outputSource'), cfg.source, '{{previous.output}}')}
                 `;
                 break;
             case 'end':
-                wrap.innerHTML = typedTextarea('workflow-end-template', '结束摘要模板', cfg.result_template, '{{outputs.result}}');
+                wrap.innerHTML = typedTextarea('workflow-end-template', _t('workflows.config.endTemplate'), cfg.result_template, '{{outputs.result}}');
                 break;
             default:
                 wrap.innerHTML = '';
@@ -491,7 +512,7 @@
         if (!wrap) return;
         const entries = Object.entries(config || {});
         if (!entries.length) {
-            wrap.innerHTML = '<div class="workflow-property-empty workflow-property-empty--compact">暂无自定义字段</div>';
+            wrap.innerHTML = '<div class="workflow-property-empty workflow-property-empty--compact">' + esc(_t('workflows.noCustomFields')) + '</div>';
             return;
         }
         wrap.innerHTML = entries.map(([key, value], index) => `
@@ -572,7 +593,7 @@
         const duplicate = cy.edges().some(edge => edge.source().id() === connectSourceId && edge.target().id() === node.id());
         if (duplicate) {
             if (typeof showNotification === 'function') {
-                showNotification('这两个节点之间已经有连线', 'warning');
+                showNotification(_t('workflows.duplicateEdge'), 'warning');
             }
             clearConnectSource();
             return;
@@ -584,10 +605,10 @@
         if (sourceType === 'condition') {
             const siblingCount = cy.edges().filter(edge => edge.source().id() === connectSourceId).length;
             if (siblingCount === 0) {
-                edgeLabel = '是';
+                edgeLabel = _t('workflows.edges.yes');
                 edgeConfig = { condition: '{{previous.matched}} == "true"', branch: 'true' };
             } else if (siblingCount === 1) {
-                edgeLabel = '否';
+                edgeLabel = _t('workflows.edges.no');
                 edgeConfig = { condition: '{{previous.matched}} == "false"', branch: 'false' };
             } else {
                 edgeConfig = { condition: '' };
@@ -619,7 +640,7 @@
             data: {
                 id: nextNodeId(type),
                 type,
-                label: NODE_LABELS[type] || '节点',
+                label: wfNodeLabel(type),
                 config: defaultConfigForType(type)
             },
             position: position || { x: 180 + cy.nodes().length * 28, y: 160 + cy.nodes().length * 28 }
@@ -631,7 +652,7 @@
     window.refreshWorkflows = async function () {
         initCy();
         const list = document.getElementById('workflow-list');
-        if (list) list.innerHTML = '<div class="loading-spinner">加载中...</div>';
+        if (list) list.innerHTML = '<div class="loading-spinner">' + esc(_t('common.loading')) + '</div>';
         try {
             await loadWorkflows(true);
             renderWorkflowList();
@@ -668,38 +689,38 @@
         const ids = new Set(nodes.map(node => node.id));
         const starts = nodes.filter(node => node.type === 'start');
         const outputs = nodes.filter(node => node.type === 'output');
-        if (!starts.length) errors.push('至少需要一个开始节点');
-        if (!outputs.length) errors.push('至少需要一个输出节点');
+        if (!starts.length) errors.push(_t('workflows.validation.needStart'));
+        if (!outputs.length) errors.push(_t('workflows.validation.needOutput'));
         edges.forEach(edge => {
-            if (edge.source === edge.target) errors.push(`连线 ${edge.id} 不能指向自身`);
-            if (!ids.has(edge.source)) errors.push(`连线 ${edge.id} 的源节点不存在`);
-            if (!ids.has(edge.target)) errors.push(`连线 ${edge.id} 的目标节点不存在`);
+            if (edge.source === edge.target) errors.push(_t('workflows.validation.edgeSelfLoop', { id: edge.id }));
+            if (!ids.has(edge.source)) errors.push(_t('workflows.validation.edgeSourceMissing', { id: edge.id }));
+            if (!ids.has(edge.target)) errors.push(_t('workflows.validation.edgeTargetMissing', { id: edge.id }));
         });
         starts.forEach(node => {
-            if (edges.some(edge => edge.target === node.id)) errors.push(`开始节点 ${node.label || node.id} 不应有入边`);
+            if (edges.some(edge => edge.target === node.id)) errors.push(_t('workflows.validation.startIncoming', { label: node.label || node.id }));
         });
         outputs.forEach(node => {
-            if (edges.some(edge => edge.source === node.id)) errors.push(`输出节点 ${node.label || node.id} 不应有出边`);
+            if (edges.some(edge => edge.source === node.id)) errors.push(_t('workflows.validation.outputOutgoing', { label: node.label || node.id }));
         });
         nodes.filter(node => node.type === 'tool').forEach(node => {
             if (!String((node.config || {}).tool_name || '').trim()) {
-                errors.push(`工具节点 ${node.label || node.id} 需要选择 MCP 工具`);
+                errors.push(_t('workflows.validation.toolNeedsMcp', { label: node.label || node.id }));
             }
         });
         nodes.filter(node => node.type === 'condition').forEach(node => {
             if (!String((node.config || {}).expression || '').trim()) {
-                errors.push(`条件节点 ${node.label || node.id} 需要条件表达式`);
+                errors.push(_t('workflows.validation.conditionNeedsExpr', { label: node.label || node.id }));
             }
             const outEdges = edges.filter(edge => edge.source === node.id);
             if (outEdges.length === 0) {
-                errors.push(`条件节点 ${node.label || node.id} 至少需要一条出边（是/否分支）`);
+                errors.push(_t('workflows.validation.conditionNeedsOutEdge', { label: node.label || node.id }));
             } else if (outEdges.length > 2) {
-                errors.push(`条件节点 ${node.label || node.id} 建议最多两条出边（是/否）；第三条及以后需配置连线条件`);
+                errors.push(_t('workflows.validation.conditionTooManyEdges', { label: node.label || node.id }));
             }
         });
         nodes.filter(node => node.type === 'output').forEach(node => {
             if (!String((node.config || {}).output_key || '').trim()) {
-                errors.push(`输出节点 ${node.label || node.id} 需要输出变量名`);
+                errors.push(_t('workflows.validation.outputNeedsKey', { label: node.label || node.id }));
             }
         });
         return errors;
@@ -712,7 +733,7 @@
         const description = document.getElementById('workflow-description').value.trim();
         const enabled = document.getElementById('workflow-enabled').checked;
         if (!id || !name) {
-            showNotification('工作流 ID 和名称不能为空', 'error');
+            showNotification(_t('workflows.idNameRequired'), 'error');
             return;
         }
         const graph = elementsToGraph();
@@ -730,12 +751,12 @@
         });
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            showNotification(err.error || '保存工作流失败', 'error');
+            showNotification(err.error || _t('workflows.saveFailed'), 'error');
             return;
         }
         const data = await response.json();
         currentWorkflowId = data.workflow && data.workflow.id ? data.workflow.id : id;
-        showNotification('工作流已保存', 'success');
+        showNotification(_t('workflows.saved'), 'success');
         await refreshWorkflows();
         if (typeof loadWorkflowOptionsForRoleModal === 'function') {
             await loadWorkflowOptionsForRoleModal();
@@ -745,18 +766,18 @@
     window.deleteCurrentWorkflow = async function () {
         const id = currentWorkflowId || document.getElementById('workflow-id').value.trim();
         if (!id) {
-            showNotification('请选择要删除的工作流', 'warning');
+            showNotification(_t('workflows.selectToDelete'), 'warning');
             return;
         }
-        if (!confirm(`确定删除工作流 ${id}？`)) return;
+        if (!confirm(_t('workflows.confirmDelete', { id: id }))) return;
         const response = await apiFetch(`/api/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' });
         if (!response.ok) {
             const err = await response.json().catch(() => ({}));
-            showNotification(err.error || '删除工作流失败', 'error');
+            showNotification(err.error || _t('workflows.deleteFailed'), 'error');
             return;
         }
         currentWorkflowId = '';
-        showNotification('工作流已删除', 'success');
+        showNotification(_t('workflows.deleted'), 'success');
         newWorkflowDraft();
         await refreshWorkflows();
     };
@@ -795,10 +816,10 @@
         const btn = document.getElementById('workflow-connect-btn');
         if (btn) {
             btn.classList.toggle('active', connectMode);
-            btn.textContent = connectMode ? '连线中' : '连线';
+            btn.textContent = connectMode ? _t('workflows.connecting') : _t('workflows.connect');
         }
         if (typeof showNotification === 'function') {
-            showNotification(connectMode ? '连线模式：依次点击源节点和目标节点' : '已退出连线模式', 'info');
+            showNotification(connectMode ? _t('workflows.connectModeOn') : _t('workflows.connectModeOff'), 'info');
         }
     };
 
@@ -834,7 +855,7 @@
             selectedElement.data('type', type);
             if (type !== prevType) {
                 selectedElement.data('config', defaultConfigForType(type));
-                selectedElement.data('label', label || NODE_LABELS[type] || '节点');
+                selectedElement.data('label', label || wfNodeLabel(type));
                 document.getElementById('workflow-prop-label').value = selectedElement.data('label') || '';
                 renderTypedConfig(selectedElement);
                 renderCustomFields({});
@@ -883,9 +904,54 @@
         const select = document.getElementById('role-workflow-id');
         if (!select) return;
         const current = selectedId !== undefined ? selectedId : select.value;
-        select.innerHTML = '<option value="">不绑定流程</option>' + workflows.map(wf => (
-            `<option value="${esc(wf.id)}">${esc(wf.name || wf.id)}${wf.enabled ? '' : '（已禁用）'}</option>`
+        select.innerHTML = '<option value="">' + esc(_t('roleModal.noWorkflowBind')) + '</option>' + workflows.map(wf => (
+            `<option value="${esc(wf.id)}">${esc(wf.name || wf.id)}${wf.enabled ? '' : esc(_t('roleModal.workflowDisabledSuffix'))}</option>`
         )).join('');
         select.value = current || '';
     };
+
+    function refreshCanvasLabels() {
+        if (!cy) return;
+        cy.nodes().forEach(function (node) {
+            const type = node.data('type') || 'tool';
+            const label = node.data('label') || '';
+            const known = KNOWN_NODE_LABELS[type] || [];
+            if (known.indexOf(label) !== -1) {
+                node.data('label', wfNodeLabel(type));
+            }
+        });
+        cy.edges().forEach(function (edge) {
+            const label = edge.data('label') || '';
+            if (KNOWN_EDGE_LABELS.yes.indexOf(label) !== -1) {
+                edge.data('label', _t('workflows.edges.yes'));
+            } else if (KNOWN_EDGE_LABELS.no.indexOf(label) !== -1) {
+                edge.data('label', _t('workflows.edges.no'));
+            }
+        });
+    }
+
+    function refreshWorkflowsI18n() {
+        const page = document.getElementById('page-workflows');
+        if (page && typeof window.applyTranslations === 'function') {
+            window.applyTranslations(page);
+        }
+        const connectBtn = document.getElementById('workflow-connect-btn');
+        if (connectBtn) {
+            connectBtn.textContent = connectMode ? _t('workflows.connecting') : _t('workflows.connect');
+        }
+        refreshCanvasLabels();
+        renderWorkflowList();
+        if (selectedElement && selectedElement.length) {
+            selectWorkflowElement(selectedElement);
+        } else {
+            selectWorkflowElement(null);
+        }
+        if (typeof loadWorkflowOptionsForRoleModal === 'function') {
+            loadWorkflowOptionsForRoleModal();
+        }
+    }
+
+    document.addEventListener('languagechange', function () {
+        refreshWorkflowsI18n();
+    });
 })();

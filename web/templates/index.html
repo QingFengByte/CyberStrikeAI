@@ -202,13 +202,13 @@
                         </div>
                     </div>
                     <div class="nav-item" data-page="workflows">
-                        <div class="nav-item-content" data-title="图编排" onclick="switchPage('workflows')">
+                        <div class="nav-item-content" data-title="图编排" onclick="switchPage('workflows')" data-i18n="nav.workflows" data-i18n-attr="data-title" data-i18n-skip-text="true">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <rect x="3" y="3" width="8" height="8" rx="2"/>
                                 <path d="M7 11v4a2 2 0 0 0 2 2h4"/>
                                 <rect x="13" y="13" width="8" height="8" rx="2"/>
                             </svg>
-                            <span>图编排</span>
+                            <span data-i18n="nav.workflows">图编排</span>
                         </div>
                     </div>
                     <div class="nav-item" data-page="projects">
@@ -2550,85 +2550,85 @@
                 <!-- 图编排页面 -->
                 <div id="page-workflows" class="page">
                     <div class="page-header">
-                        <h2>图编排</h2>
+                        <h2 data-i18n="workflows.title">图编排</h2>
                         <div class="page-header-actions">
-                            <button class="btn-secondary" onclick="refreshWorkflows()">刷新</button>
-                            <button class="btn-primary" onclick="newWorkflowDraft()">新建图</button>
+                            <button class="btn-secondary" onclick="refreshWorkflows()" data-i18n="common.refresh">刷新</button>
+                            <button class="btn-primary" onclick="newWorkflowDraft()" data-i18n="workflows.newGraph">新建图</button>
                         </div>
                     </div>
                     <div class="page-content workflow-page-content">
                         <aside class="workflow-sidebar">
                             <div class="workflow-panel">
                                 <div class="workflow-panel-header">
-                                    <h3>流程库</h3>
+                                    <h3 data-i18n="workflows.processLibrary">流程库</h3>
                                 </div>
                                 <div id="workflow-list" class="workflow-list">
-                                    <div class="loading-spinner">加载中...</div>
+                                    <div class="loading-spinner" data-i18n="common.loading">加载中...</div>
                                 </div>
                             </div>
                             <div class="workflow-panel">
                                 <div class="workflow-panel-header">
-                                    <h3>节点库</h3>
+                                    <h3 data-i18n="workflows.nodeLibrary">节点库</h3>
                                 </div>
                                 <div class="workflow-node-palette">
-                                    <button type="button" draggable="true" data-node-type="start" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('start')">开始</button>
-                                    <button type="button" draggable="true" data-node-type="tool" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('tool')">工具</button>
-                                    <button type="button" draggable="true" data-node-type="agent" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('agent')">Agent</button>
-                                    <button type="button" draggable="true" data-node-type="condition" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('condition')">条件</button>
-                                    <button type="button" draggable="true" data-node-type="hitl" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('hitl')">审批</button>
-                                    <button type="button" draggable="true" data-node-type="output" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('output')">输出</button>
-                                    <button type="button" draggable="true" data-node-type="end" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('end')">结束</button>
+                                    <button type="button" draggable="true" data-node-type="start" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('start')" data-i18n="workflows.nodes.start">开始</button>
+                                    <button type="button" draggable="true" data-node-type="tool" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('tool')" data-i18n="workflows.nodes.tool">工具</button>
+                                    <button type="button" draggable="true" data-node-type="agent" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('agent')" data-i18n="workflows.nodes.agent">Agent</button>
+                                    <button type="button" draggable="true" data-node-type="condition" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('condition')" data-i18n="workflows.nodes.condition">条件</button>
+                                    <button type="button" draggable="true" data-node-type="hitl" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('hitl')" data-i18n="workflows.nodes.hitl">审批</button>
+                                    <button type="button" draggable="true" data-node-type="output" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('output')" data-i18n="workflows.nodes.output">输出</button>
+                                    <button type="button" draggable="true" data-node-type="end" ondragstart="workflowPaletteDragStart(event)" onclick="addWorkflowNodeFromPalette('end')" data-i18n="workflows.nodes.end">结束</button>
                                 </div>
                             </div>
                         </aside>
                         <main class="workflow-main">
                             <section class="workflow-meta-bar">
                                 <div class="workflow-meta-fields">
-                                    <label>ID <input type="text" id="workflow-id" placeholder="web-scan-basic" autocomplete="off"></label>
-                                    <label>名称 <input type="text" id="workflow-name" placeholder="基础 Web 扫描" autocomplete="off"></label>
-                                    <label>描述 <input type="text" id="workflow-description" placeholder="可选" autocomplete="off"></label>
-                                    <label class="workflow-enabled-toggle"><input type="checkbox" id="workflow-enabled" checked> 启用</label>
+                                    <label><span data-i18n="workflows.metaId">ID</span> <input type="text" id="workflow-id" placeholder="web-scan-basic" autocomplete="off"></label>
+                                    <label><span data-i18n="workflows.metaName">名称</span> <input type="text" id="workflow-name" data-i18n="workflows.namePlaceholder" data-i18n-attr="placeholder" placeholder="基础 Web 扫描" autocomplete="off"></label>
+                                    <label><span data-i18n="workflows.metaDescription">描述</span> <input type="text" id="workflow-description" data-i18n="workflows.descriptionPlaceholder" data-i18n-attr="placeholder" placeholder="可选" autocomplete="off"></label>
+                                    <label class="workflow-enabled-toggle"><input type="checkbox" id="workflow-enabled" checked> <span data-i18n="workflows.metaEnabled">启用</span></label>
                                 </div>
                                 <div class="workflow-toolbar">
-                                    <button class="btn-secondary btn-small" type="button" onclick="toggleWorkflowConnectMode()" id="workflow-connect-btn">连线</button>
-                                    <button class="btn-secondary btn-small" type="button" onclick="deleteWorkflowSelection()">删除选中</button>
-                                    <button class="btn-secondary btn-small" type="button" onclick="layoutWorkflowGraph()">自动布局</button>
-                                    <button class="btn-secondary btn-small" onclick="deleteCurrentWorkflow()">删除</button>
-                                    <button class="btn-primary btn-small" onclick="saveWorkflowDraft()">保存</button>
+                                    <button class="btn-secondary btn-small" type="button" onclick="toggleWorkflowConnectMode()" id="workflow-connect-btn" data-i18n="workflows.connect">连线</button>
+                                    <button class="btn-secondary btn-small" type="button" onclick="deleteWorkflowSelection()" data-i18n="workflows.deleteSelected">删除选中</button>
+                                    <button class="btn-secondary btn-small" type="button" onclick="layoutWorkflowGraph()" data-i18n="workflows.autoLayout">自动布局</button>
+                                    <button class="btn-secondary btn-small" onclick="deleteCurrentWorkflow()" data-i18n="common.delete">删除</button>
+                                    <button class="btn-primary btn-small" onclick="saveWorkflowDraft()" data-i18n="common.save">保存</button>
                                 </div>
                             </section>
                             <section class="workflow-canvas-wrap" ondragover="workflowCanvasDragOver(event)" ondrop="workflowCanvasDrop(event)">
                                 <div id="workflow-canvas"></div>
-                                <div id="workflow-canvas-empty" class="workflow-canvas-empty">从左侧拖拽节点到画布，或点击节点按钮快速添加</div>
+                                <div id="workflow-canvas-empty" class="workflow-canvas-empty" data-i18n="workflows.canvasEmpty">从左侧拖拽节点到画布，或点击节点按钮快速添加</div>
                             </section>
                         </main>
                         <aside class="workflow-properties">
                             <div class="workflow-panel-header">
-                                <h3 id="workflow-property-title">属性</h3>
-                                <button type="button" id="workflow-property-delete-btn" class="btn-secondary btn-small" onclick="deleteWorkflowSelection()" hidden>删除</button>
+                                <h3 id="workflow-property-title" data-i18n="workflows.properties">属性</h3>
+                                <button type="button" id="workflow-property-delete-btn" class="btn-secondary btn-small" onclick="deleteWorkflowSelection()" hidden data-i18n="common.delete">删除</button>
                             </div>
-                            <div id="workflow-property-empty" class="workflow-property-empty">选择一个节点或连线后编辑属性</div>
+                            <div id="workflow-property-empty" class="workflow-property-empty" data-i18n="workflows.propertyEmpty">选择一个节点或连线后编辑属性</div>
                             <div id="workflow-property-form" class="workflow-property-form" hidden>
                                 <div class="form-group">
-                                    <label for="workflow-prop-label">名称</label>
+                                    <label for="workflow-prop-label" data-i18n="workflows.propLabel">名称</label>
                                     <input type="text" id="workflow-prop-label" class="form-input" oninput="updateWorkflowSelectedProperty()">
                                 </div>
                                 <div class="form-group" id="workflow-prop-type-wrap">
-                                    <label for="workflow-prop-type">类型</label>
+                                    <label for="workflow-prop-type" data-i18n="workflows.propType">类型</label>
                                     <select id="workflow-prop-type" onchange="updateWorkflowSelectedProperty()">
-                                        <option value="start">开始</option>
-                                        <option value="tool">工具</option>
-                                        <option value="agent">Agent</option>
-                                        <option value="condition">条件</option>
-                                        <option value="hitl">审批</option>
-                                        <option value="output">输出</option>
-                                        <option value="end">结束</option>
+                                        <option value="start" data-i18n="workflows.nodes.start">开始</option>
+                                        <option value="tool" data-i18n="workflows.nodes.tool">工具</option>
+                                        <option value="agent" data-i18n="workflows.nodes.agent">Agent</option>
+                                        <option value="condition" data-i18n="workflows.nodes.condition">条件</option>
+                                        <option value="hitl" data-i18n="workflows.nodes.hitl">审批</option>
+                                        <option value="output" data-i18n="workflows.nodes.output">输出</option>
+                                        <option value="end" data-i18n="workflows.nodes.end">结束</option>
                                     </select>
                                 </div>
                                 <div id="workflow-typed-config" class="workflow-typed-config"></div>
                                 <div class="workflow-custom-fields-head">
-                                    <span>自定义字段</span>
-                                    <button type="button" class="btn-secondary btn-small" onclick="addWorkflowCustomField()">添加字段</button>
+                                    <span data-i18n="workflows.customFields">自定义字段</span>
+                                    <button type="button" class="btn-secondary btn-small" onclick="addWorkflowCustomField()" data-i18n="workflows.addField">添加字段</button>
                                 </div>
                                 <div id="workflow-custom-fields" class="workflow-custom-fields"></div>
                             </div>
@@ -4661,17 +4661,17 @@
                     <small class="form-hint" data-i18n="roleModal.userPromptHint">此提示词会追加到用户消息前，用于指导AI的行为。注意：这不会修改系统提示词。</small>
                 </div>
                 <div class="form-group">
-                    <label for="role-workflow-id">绑定图编排流程</label>
+                    <label for="role-workflow-id" data-i18n="roleModal.bindWorkflow">绑定图编排流程</label>
                     <select id="role-workflow-id">
-                        <option value="">不绑定流程</option>
+                        <option value="" data-i18n="roleModal.noWorkflowBind">不绑定流程</option>
                     </select>
-                    <small class="form-hint">选中流程后，对话页使用该角色会自动触发绑定图；流程字段由图定义 JSON 自由配置。</small>
+                    <small class="form-hint" data-i18n="roleModal.bindWorkflowHint">选中流程后，对话页使用该角色会自动触发绑定图；流程字段由图定义 JSON 自由配置。</small>
                 </div>
                 <div class="form-group">
-                    <label for="role-workflow-policy">流程触发策略</label>
+                    <label for="role-workflow-policy" data-i18n="roleModal.workflowPolicy">流程触发策略</label>
                     <select id="role-workflow-policy">
-                        <option value="auto">自动触发</option>
-                        <option value="off">关闭</option>
+                        <option value="auto" data-i18n="roleModal.workflowPolicyAuto">自动触发</option>
+                        <option value="off" data-i18n="roleModal.workflowPolicyOff">关闭</option>
                     </select>
                 </div>
                 <div class="form-group" id="role-tools-section">
