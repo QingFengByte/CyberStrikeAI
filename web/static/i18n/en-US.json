@@ -1539,7 +1539,8 @@
       "webshellManagement": "WebShell Management",
       "chatUploads": "Chat Uploads",
       "robotIntegration": "Robot Integration",
-      "markdownAgents": "Markdown Agents"
+      "markdownAgents": "Markdown Agents",
+      "projectManagement": "Project Management"
     },
     "summary": {
       "login": "User login",
@@ -1685,7 +1686,19 @@
       "getSkillPackageFile": "Get skill package file content",
       "putSkillPackageFile": "Write skill package file",
       "batchGetToolNames": "Batch get tool names",
-      "getKnowledgeStats": "Get knowledge base stats"
+      "getKnowledgeStats": "Get knowledge base stats",
+      "listProjects": "List projects",
+      "createProject": "Create project",
+      "getProject": "Get project",
+      "updateProject": "Update project",
+      "deleteProject": "Delete project",
+      "listProjectFacts": "List or get fact by key",
+      "upsertProjectFact": "Create/update fact",
+      "getProjectFactGraph": "Get project fact attack path graph",
+      "listProjectFactEdges": "List all project fact edges",
+      "createProjectFactEdge": "Add fact edge",
+      "deleteProjectFactEdge": "Delete fact edge",
+      "promoteAttackChainToProject": "Promote conversation attack chain to project fact graph"
     },
     "response": {
       "getSuccess": "Success",
@@ -1742,7 +1755,15 @@
       "saveSuccess": "Saved successfully",
       "operationResult": "Operation result",
       "executionResult": "Execution result",
-      "connectionNotFound": "Connection not found"
+      "connectionNotFound": "Connection not found",
+      "projectList": "Project list",
+      "projectDetail": "Project detail",
+      "projectFactList": "Fact list or single fact (may include link_counts / outgoing_links)",
+      "success": "Success",
+      "factGraphNodesEdges": "nodes + edges",
+      "edgeList": "Edge list",
+      "edgeCreated": "Edge created",
+      "promoteAttackChainResult": "Promotion result (facts/edges/graph)"
     }
   },
   "chatGroup": {

@@ -1527,7 +1527,8 @@
       "webshellManagement": "WebShell管理",
       "chatUploads": "对话附件",
       "robotIntegration": "机器人集成",
-      "markdownAgents": "多代理Markdown"
+      "markdownAgents": "多代理Markdown",
+      "projectManagement": "项目管理"
     },
     "summary": {
       "login": "用户登录",
@@ -1673,7 +1674,19 @@
       "getSkillPackageFile": "获取技能包文件内容",
       "putSkillPackageFile": "写入技能包文件",
       "batchGetToolNames": "批量获取工具名称",
-      "getKnowledgeStats": "获取知识库统计"
+      "getKnowledgeStats": "获取知识库统计",
+      "listProjects": "列出项目",
+      "createProject": "创建项目",
+      "getProject": "获取项目",
+      "updateProject": "更新项目",
+      "deleteProject": "删除项目",
+      "listProjectFacts": "列出或按 key 获取事实",
+      "upsertProjectFact": "创建/更新事实",
+      "getProjectFactGraph": "获取项目事实攻击路径图",
+      "listProjectFactEdges": "列出项目全部事实边",
+      "createProjectFactEdge": "添加事实边",
+      "deleteProjectFactEdge": "删除事实边",
+      "promoteAttackChainToProject": "将对话攻击链沉淀到项目事实图"
     },
     "response": {
       "getSuccess": "获取成功",
@@ -1730,7 +1743,15 @@
       "saveSuccess": "保存成功",
       "operationResult": "操作结果",
       "executionResult": "执行结果",
-      "connectionNotFound": "连接不存在"
+      "connectionNotFound": "连接不存在",
+      "projectList": "项目列表",
+      "projectDetail": "项目详情",
+      "projectFactList": "事实列表或单条（可含 link_counts / outgoing_links）",
+      "success": "成功",
+      "factGraphNodesEdges": "nodes + edges",
+      "edgeList": "边列表",
+      "edgeCreated": "边已创建",
+      "promoteAttackChainResult": "沉淀结果（facts/edges/graph）"
     }
   },
   "chatGroup": {
