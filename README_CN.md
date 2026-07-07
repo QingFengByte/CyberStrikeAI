@@ -131,7 +131,7 @@ CyberStrikeAI 是一款 **AI 原生安全测试平台**，基于 Go 构建，集
 - 🖼️ **视觉分析（`analyze_image`）**：独立 Vision 模型（如 `qwen-vl-max`），MCP 工具分析本地截图/验证码/UI；图片仅在单次 VL 调用中出现，对话上下文只保留文字摘要。配置见 `config.yaml` → `vision` 与 [视觉分析说明](docs/VISION.md)
 - 🎯 **Skills（面向 Eino 重构）**：技能包放在 **`skills_dir`**，遵循 **Agent Skills** 目录规范（`SKILL.md` + 可选文件）；**多代理** 下通过 Eino 官方 **`skill`** 工具 **渐进式披露**（按 name 加载）。**`multi_agent.eino_skills`** 控制是否启用、本机文件/Shell 工具、工具名覆盖；**`eino_middleware`** 可选 patch、tool_search、**plantask**（`TaskCreate` / `TaskList` 任务板，落在 `skills_dir/.eino/plantask/`）、reduction、文件型 **checkpoint**（`checkpoint_dir`）、ChatModel **重试**、会话 **输出键** 及 Deep 调参。20+ 领域示例仍可绑定角色
 - 📱 **机器人**：个人微信、企业微信、钉钉、飞书、Telegram、Slack、Discord、QQ 机器人，在手机或 IM 中与 CyberStrikeAI 对话（详见 [机器人使用说明](docs/robot.md)）
-- 🧑‍⚖️ **人机协同（HITL）**：对话页侧栏配置协同模式与免审批工具白名单；全局列表在 `config.yaml` 的 `hitl.tool_whitelist`；点「应用」可将新增工具合并写入配置文件且**无需重启**即可生效；导航 **人机协同** 页处理待审批工具调用
+- 🧑‍⚖️ **人机协同（HITL）**：对话页侧栏配置协同模式与免审批工具白名单；全局列表在 `config.yaml` 的 `hitl.tool_whitelist`；审计 Agent 可通过 `hitl.audit_model` 使用独立小模型；点「应用」可将新增工具合并写入配置文件且**无需重启**即可生效；导航 **人机协同** 页处理待审批工具调用。详见 [人机协同最佳实践](docs/hitl-best-practices.md)
 - 🐚 **WebShell 管理**：添加与管理 WebShell 连接（兼容冰蝎/蚁剑等），通过虚拟终端执行命令、内置文件管理进行文件操作，并提供按连接维度保存历史的 AI 助手标签页；支持 PHP/ASP/ASPX/JSP 及自定义类型，可配置请求方法与命令参数。
 - 📡 **内置 C2**：面向 AI 协同的轻量 **C2**——**多种监听器**（TCP 反向、HTTP/HTTPS Beacon、WebSocket）、**加密** Beacon 信道、**会话与任务**队列及持久化、**Payload** 辅助（一键命令 / 构建 / 下载）、**SSE** 实时事件、REST（`/api/c2/*`）及智能体侧 **一组 C2 MCP 工具**（如 `c2_listener`、`c2_session`、**`c2_task`**、`c2_task_manage`、`c2_payload`、`c2_event`、`c2_profile`、`c2_file`）；敏感操作可对接 **人机协同（HITL）**，并支持 OPSEC 类规则（如命令拒绝正则）。**仅限授权测试。**
 
@@ -263,7 +263,7 @@ go build -o cyberstrike-ai cmd/server/main.go
 - **WebShell 管理**：添加并管理 WebShell 连接（PHP/ASP/ASPX/JSP 或自定义类型）。使用虚拟终端执行命令（带命令历史与快捷命令），使用文件管理浏览、读取、编辑、上传与删除目标文件，并支持按路径导航和名称过滤。连接信息持久化存储于 SQLite，支持 GET/POST 及可配置命令参数（兼容冰蝎/蚁剑等）。
 - **内置 C2**：在 Web 界面或 `/api/c2/*` 创建/启动 **监听器**、生成 **Payload**、查看 **会话**、下发 **任务** 并订阅 **事件（SSE）**。智能体与外部客户端通过 **C2 MCP 工具族**（含 **`c2_task`** 等）编排；开启人机协同时，高风险任务可走审批。**仅用于已获明确授权的目标。**
 - **可视化配置**：在界面中切换模型、启停工具、设置迭代次数等。
-- **人机协同（HITL）**：侧栏设置协同模式与免审批工具（逗号或换行）；全局白名单见 `config.yaml` 的 `hitl.tool_whitelist`。点「**应用**」可写浏览器/服务端并合并新增工具进配置（**无需重启**）。**新对话**保留侧栏选择；导航 **人机协同** 处理待审批。从侧栏删掉工具不会自动从配置文件移除全局项，需手改 `config.yaml`。
+- **人机协同（HITL）**：侧栏设置协同模式与免审批工具（逗号或换行）；全局白名单见 `config.yaml` 的 `hitl.tool_whitelist`。审计 Agent 可通过 `hitl.audit_model` 单独配置低成本模型，适合人工审计压力较大时接管常规审批。点「**应用**」可写浏览器/服务端并合并新增工具进配置（**无需重启**）。**新对话**保留侧栏选择；导航 **人机协同** 处理待审批。从侧栏删掉工具不会自动从配置文件移除全局项，需手改 `config.yaml`。
 
 ### 默认安全措施
 - 设置面板内置必填校验，防止漏配 API Key/Base URL/模型。
@@ -632,6 +632,7 @@ enabled: true
 - [多代理模式（Eino）](docs/MULTI_AGENT_EINO.md)：**Deep**、**Plan-Execute**、**Supervisor**、`agents/*.md`、`eino_skills` / `eino_middleware`、接口与流式说明。
 - [图编排使用说明](docs/workflow-graph.md)：可视化流程搭建、节点配置、`previous` / `outputs` 变量传参与角色绑定。
 - [机器人使用说明](docs/robot.md)：个人微信、企业微信、钉钉、飞书、Telegram、Slack、Discord、QQ 机器人的配置、命令与排查。
+- [人机协同最佳实践](docs/hitl-best-practices.md)：审批方模式、白名单、审计 Agent 提示词策略与独立小模型配置。
 
 ## 项目结构
 
