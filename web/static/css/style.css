@@ -22411,29 +22411,147 @@ html[data-theme="dark"] .vulnerability-card:hover {
     font-style: italic;
 }
 
-.vuln-detail-field-select,
-.vulnerability-project-bind-select {
+.vuln-detail-native-select {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.vuln-detail-select-ui {
+    position: relative;
     flex: 1;
     min-width: 0;
+}
+
+.vuln-detail-select-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     width: 100%;
+    min-width: 0;
     margin: 0;
     padding: 8px 10px;
-    padding-right: 28px;
     border-radius: 6px;
-    background: var(--bg-tertiary);
+    background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     font-size: 0.8125rem;
     line-height: 1.45;
     color: var(--text-primary);
     font-family: inherit;
     cursor: pointer;
-    appearance: auto;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.vuln-detail-field-select:focus,
-.vulnerability-project-bind-select:focus {
-    outline: none;
+.vuln-detail-select-trigger:hover:not(:disabled) {
+    border-color: rgba(59, 130, 246, 0.45);
+}
+
+.vuln-detail-select-ui.open .vuln-detail-select-trigger {
     border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
+.vuln-detail-select-ui.open {
+    z-index: 120;
+}
+
+.vuln-detail-select-value {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.vuln-detail-select-caret {
+    flex-shrink: 0;
+    color: var(--text-secondary);
+    transition: transform 0.15s ease;
+}
+
+.vuln-detail-select-ui.open .vuln-detail-select-caret {
+    transform: rotate(180deg);
+}
+
+.vuln-detail-select-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 200;
+    max-height: 280px;
+    overflow-y: auto;
+    padding: 4px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: var(--shadow-lg);
+}
+
+.vuln-detail-select-ui.open .vuln-detail-select-dropdown {
+    display: block;
+}
+
+.vuln-detail-select-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    font-family: inherit;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+
+.vuln-detail-select-option:hover {
+    background: var(--bg-secondary);
+}
+
+.vuln-detail-select-option.is-selected {
+    background: rgba(59, 130, 246, 0.08);
+    color: #2563eb;
+    font-weight: 500;
+}
+
+.vuln-detail-select-check {
+    width: 14px;
+    flex-shrink: 0;
+    opacity: 0;
+    font-size: 0.75rem;
+    line-height: 1;
+    color: #2563eb;
+}
+
+.vuln-detail-select-option.is-selected .vuln-detail-select-check {
+    opacity: 1;
+}
+
+.vuln-detail-select-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vuln-detail-select-ui.is-disabled .vuln-detail-select-trigger {
+    opacity: 0.55;
+    cursor: not-allowed;
 }
 
 .severity-badge {
@@ -22753,7 +22871,7 @@ html[data-theme="dark"] .vulnerability-card:hover {
     margin: 0;
     padding: 8px 10px;
     border-radius: 6px;
-    background: var(--bg-tertiary);
+    background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     font-size: 0.8125rem;
     line-height: 1.45;
@@ -22764,6 +22882,12 @@ html[data-theme="dark"] .vulnerability-card:hover {
     -webkit-user-select: text;
     color: var(--text-primary);
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+}
+
+html[data-theme="dark"] .vulnerability-details code.vuln-detail-field-value {
+    background: var(--bg-secondary) !important;
+    color: var(--text-primary);
+    border-color: var(--border-color);
 }
 
 .vuln-detail-field__copy {
@@ -22784,8 +22908,11 @@ html[data-theme="dark"] .vulnerability-card:hover {
     border-color: var(--border-color);
 }
 
-.vuln-detail-field__row .vuln-detail-field-select {
-    flex: 1;
+.vuln-detail-field__copy-spacer {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    margin-top: 2px;
 }
 
 .vulnerability-repro {
@@ -29331,6 +29458,7 @@ html[data-theme="dark"] .role-select-item:hover,
 html[data-theme="dark"] .custom-select-option:hover,
 html[data-theme="dark"] .audit-custom-select-option:hover,
 html[data-theme="dark"] .vuln-filter-select-option:hover,
+html[data-theme="dark"] .vuln-detail-select-option:hover,
 html[data-theme="dark"] .hitl-filter-select-option:hover,
 html[data-theme="dark"] .tasks-filter-select-option:hover,
 html[data-theme="dark"] .workflow-form-select-option:hover,
@@ -29348,6 +29476,7 @@ html[data-theme="dark"] .role-select-item.selected,
 html[data-theme="dark"] .custom-select-option.selected,
 html[data-theme="dark"] .audit-custom-select-option.is-selected,
 html[data-theme="dark"] .vuln-filter-select-option.is-selected,
+html[data-theme="dark"] .vuln-detail-select-option.is-selected,
 html[data-theme="dark"] .hitl-filter-select-option.is-selected,
 html[data-theme="dark"] .tasks-filter-select-option.is-selected,
 html[data-theme="dark"] .workflow-form-select-option.is-selected,
@@ -29399,6 +29528,7 @@ html[data-theme="dark"] .model-pick-input:focus,
 html[data-theme="dark"] .custom-select.open .custom-select-trigger,
 html[data-theme="dark"] .audit-custom-select.open .audit-custom-select-trigger,
 html[data-theme="dark"] .vuln-filter-select.open .vuln-filter-select-trigger,
+html[data-theme="dark"] .vuln-detail-select-ui.open .vuln-detail-select-trigger,
 html[data-theme="dark"] .hitl-filter-select-ui.open .hitl-filter-select-trigger,
 html[data-theme="dark"] .tasks-filter-select-ui.open .tasks-filter-select-trigger,
 html[data-theme="dark"] .workflow-form-select-ui.open .workflow-form-select-trigger,
