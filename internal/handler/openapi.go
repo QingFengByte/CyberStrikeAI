@@ -4416,15 +4416,34 @@ func (h *OpenAPIHandler) GetOpenAPISpec(c *gin.Context) {
 			"/api/knowledge/index": map[string]interface{}{
 				"post": map[string]interface{}{
 					"tags":        []string{"知识库"},
-					"summary":     "重建索引",
-					"description": "重新构建知识库索引",
-					"operationId": "rebuildIndex",
+					"summary":     "构建索引",
+					"description": "构建知识库向量索引。默认仅处理尚无向量的知识项；mode=full 时全量重建。",
+					"operationId": "startKnowledgeIndex",
+					"parameters": []map[string]interface{}{
+						{
+							"name":        "mode",
+							"in":          "query",
+							"required":    false,
+							"description": "索引模式：missing（默认，补齐缺失向量）或 full（全量重建）",
+							"schema": map[string]interface{}{
+								"type":    "string",
+								"enum":    []string{"missing", "full"},
+								"default": "missing",
+							},
+						},
+					},
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{
-							"description": "重建索引任务已启动",
+							"description": "索引任务已启动",
+						},
+						"400": map[string]interface{}{
+							"description": "无效的 mode 参数",
 						},
 						"401": map[string]interface{}{
 							"description": "未授权",
+						},
+						"409": map[string]interface{}{
+							"description": "已有索引任务正在进行",
 						},
 					},
 				},

@@ -43,7 +43,7 @@ var apiDocI18nSummaryToKey = map[string]string{
 	"设置对话置顶": "pinConversation", "设置分组置顶": "pinGroup", "设置分组中对话的置顶": "pinGroupConversation",
 	"获取分类": "getCategories", "列出知识项": "listKnowledgeItems", "创建知识项": "createKnowledgeItem",
 	"获取知识项": "getKnowledgeItem", "更新知识项": "updateKnowledgeItem", "删除知识项": "deleteKnowledgeItem",
-	"获取索引状态": "getIndexStatus", "重建索引": "rebuildIndex", "扫描知识库": "scanKnowledgeBase",
+	"获取索引状态": "getIndexStatus", "构建索引": "startKnowledgeIndex", "扫描知识库": "scanKnowledgeBase",
 	"搜索知识库": "searchKnowledgeBase", "基础搜索": "basicSearch", "按风险类型搜索": "searchByRiskType",
 	"获取检索日志": "getRetrievalLogs", "删除检索日志": "deleteRetrievalLog",
 	"MCP端点": "mcpEndpoint", "列出所有工具": "listAllTools", "调用工具": "invokeTool", "初始化连接": "initConnection",
