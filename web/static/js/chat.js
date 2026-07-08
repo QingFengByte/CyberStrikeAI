@@ -2441,6 +2441,20 @@ function compactWorkflowProcessDetails(details) {
     });
 }
 
+function isProcessDetailsUserExpanded(messageId) {
+    const container = document.getElementById('process-details-' + messageId);
+    return !!(container && container.dataset && container.dataset.userExpanded === '1');
+}
+
+function syncProcessDetailButtonLabels(messageId, expanded) {
+    const expandT = typeof window.t === 'function' ? window.t('chat.expandDetail') : '展开详情';
+    const collapseT = typeof window.t === 'function' ? window.t('tasks.collapseDetail') : '收起详情';
+    const label = expanded ? collapseT : expandT;
+    document.querySelectorAll('#' + messageId + ' .process-detail-btn').forEach((btn) => {
+        btn.innerHTML = '<span>' + label + '</span>';
+    });
+}
+
 // 渲染过程详情
 // options.append=true 时分页追加；options.markLoaded=false 时保留 lazy 标记（分页加载中）
 function renderProcessDetails(messageId, processDetails, options) {
@@ -2537,7 +2551,9 @@ function renderProcessDetails(messageId, processDetails, options) {
     if (!processDetails || processDetails.length === 0) {
         if (!appendMode) {
             timeline.innerHTML = '<div class="progress-timeline-empty">' + (typeof window.t === 'function' ? window.t('chat.noProcessDetail') : '暂无过程详情（可能执行过快或未触发详细事件）') + '</div>';
-            timeline.classList.remove('expanded');
+            if (!isProcessDetailsUserExpanded(messageId)) {
+                timeline.classList.remove('expanded');
+            }
         }
         return;
     }
@@ -2732,12 +2748,13 @@ function finishProcessDetailsRender(messageElement, processDetails, isLazyNotLoa
     const hasErrorOrCancelled = processDetails.some(d => 
         d.eventType === 'error' || d.eventType === 'cancelled'
     );
-    if (hasErrorOrCancelled && !hasPendingHitlInDetails && !hasPendingWorkflowHitl) {
+    const userExpanded = isProcessDetailsUserExpanded(messageElement.id);
+    if (userExpanded) {
+        timeline.classList.add('expanded');
+        syncProcessDetailButtonLabels(messageElement.id, true);
+    } else if (hasErrorOrCancelled && !hasPendingHitlInDetails && !hasPendingWorkflowHitl) {
         timeline.classList.remove('expanded');
-        const processDetailBtn = messageElement.querySelector('.process-detail-btn');
-        if (processDetailBtn) {
-            processDetailBtn.innerHTML = '<span>' + (typeof window.t === 'function' ? window.t('chat.expandDetail') : '展开详情') + '</span>';
-        }
+        syncProcessDetailButtonLabels(messageElement.id, false);
     }
     if (hasPendingWorkflowHitl && messageElement && messageElement.id) {
         const convId = typeof window.currentConversationId === 'string' ? window.currentConversationId : '';
@@ -2983,6 +3000,8 @@ function toggleMcpToolList(assistantMessageId) {
 
 window.toggleMcpToolList = toggleMcpToolList;
 window.syncMcpToolsToggleButton = syncMcpToolsToggleButton;
+window.isProcessDetailsUserExpanded = isProcessDetailsUserExpanded;
+window.syncProcessDetailButtonLabels = syncProcessDetailButtonLabels;
 window.ensureMcpCallSectionChrome = ensureMcpCallSectionChrome;
 
 /** 将 MCP 工具按钮挂到独立工具列表，并批量解析工具名 */
@@ -6279,6 +6298,9 @@ const CONVERSATION_PROJECT_FILTER_NONE = '__none__';
 const CONVERSATION_PROJECT_FILTER_SELECT_ID = 'conversation-project-filter';
 const CONVERSATION_PROJECT_FILTER_CARET = '<svg class="conversation-project-filter-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const BATCH_PROJECT_FILTER_SELECT_ID = 'batch-project-filter';
+const BATCH_GROUP_FILTER_SELECT_ID = 'batch-move-group-select';
+const BATCH_GROUP_HEADER_FILTER_SELECT_ID = 'batch-group-filter';
+const BATCH_GROUP_NONE = '__none__';
 const projectFilterCustomSelectRegistry = {};
 let projectFilterCustomSelectDocBound = false;
 
@@ -6465,6 +6487,117 @@ function syncProjectFilterCustomSelect(selectId) {
         valueSpan.textContent = selectedText;
         valueSpan.title = selectedText;
     }
+}
+
+function ensureSimpleCustomSelectOptionsUi(reg) {
+    if (reg.optionsList) return;
+    reg.dropdown.innerHTML = '';
+    const optionsList = document.createElement('div');
+    optionsList.className = 'conversation-project-filter-options';
+    reg.dropdown.appendChild(optionsList);
+    reg.optionsList = optionsList;
+}
+
+function renderSimpleCustomSelectOptions(reg) {
+    ensureSimpleCustomSelectOptionsUi(reg);
+    const { select, optionsList } = reg;
+    optionsList.innerHTML = '';
+    Array.prototype.forEach.call(select.options, (opt) => {
+        optionsList.appendChild(createProjectFilterOptionButton(opt.value, opt.textContent || '', select.value));
+    });
+}
+
+function syncSimpleCustomSelect(selectId) {
+    const reg = projectFilterCustomSelectRegistry[selectId];
+    if (!reg) return;
+    const { select, trigger } = reg;
+    const valueSpan = trigger.querySelector('.conversation-project-filter-value');
+    const selectedOpt = select.options[select.selectedIndex];
+    const selectedText = selectedOpt ? (selectedOpt.textContent || '') : '';
+    if (valueSpan) {
+        valueSpan.textContent = selectedText;
+        valueSpan.title = selectedText;
+    }
+}
+
+function initSimpleCustomSelect(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    if (select.dataset.projectCustomSelect === '1') {
+        syncSimpleCustomSelect(selectId);
+        return;
+    }
+    select.dataset.projectCustomSelect = '1';
+    select.classList.add('conversation-project-filter-native');
+    select.tabIndex = -1;
+    select.setAttribute('aria-hidden', 'true');
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'conversation-project-filter-ui';
+
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'conversation-project-filter-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    trigger.setAttribute('aria-expanded', 'false');
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'conversation-project-filter-value';
+    trigger.appendChild(valueSpan);
+    trigger.insertAdjacentHTML('beforeend', CONVERSATION_PROJECT_FILTER_CARET);
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'conversation-project-filter-dropdown';
+    dropdown.setAttribute('role', 'listbox');
+
+    const parent = select.parentNode;
+    parent.insertBefore(wrapper, select);
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(dropdown);
+    wrapper.appendChild(select);
+
+    projectFilterCustomSelectRegistry[selectId] = { wrapper, trigger, dropdown, select };
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = wrapper.classList.contains('open');
+        closeAllProjectFilterCustomSelects();
+        if (!open) {
+            wrapper.classList.add('open');
+            trigger.setAttribute('aria-expanded', 'true');
+            renderSimpleCustomSelectOptions(projectFilterCustomSelectRegistry[selectId]);
+        }
+    });
+
+    dropdown.addEventListener('click', (e) => {
+        const opt = e.target.closest('.conversation-project-filter-option');
+        if (!opt) return;
+        e.stopPropagation();
+        const val = opt.getAttribute('data-value');
+        if (val === null) return;
+        if (select.value !== val) {
+            select.value = val;
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        closeProjectFilterCustomSelect(selectId);
+        syncSimpleCustomSelect(selectId);
+    });
+
+    if (!projectFilterCustomSelectDocBound) {
+        projectFilterCustomSelectDocBound = true;
+        document.addEventListener('click', closeAllProjectFilterCustomSelects);
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeAllProjectFilterCustomSelects();
+        });
+    }
+    syncSimpleCustomSelect(selectId);
+}
+
+function initBatchGroupCustomSelect() {
+    initSimpleCustomSelect(BATCH_GROUP_FILTER_SELECT_ID);
+}
+
+function initBatchGroupHeaderFilterCustomSelect() {
+    initSimpleCustomSelect(BATCH_GROUP_HEADER_FILTER_SELECT_ID);
 }
 
 function initProjectFilterCustomSelect(selectId) {
@@ -8507,6 +8640,22 @@ function getConversationProjectLabel(conv) {
     return typeof window.t === 'function' ? window.t('batchManageModal.unknownProject') : '未知项目';
 }
 
+function getConversationGroupId(conv) {
+    return (conv && conversationGroupMappingCache[conv.id]) || '';
+}
+
+function getConversationGroupLabel(conv) {
+    const groupId = getConversationGroupId(conv);
+    if (!groupId) {
+        return typeof window.t === 'function' ? window.t('batchManageModal.noGroup') : '无分组';
+    }
+    const group = Array.isArray(groupsCache) ? groupsCache.find(g => g.id === groupId) : null;
+    if (group) {
+        return `${group.icon || '📁'} ${group.name}`;
+    }
+    return typeof window.t === 'function' ? window.t('batchManageModal.unknownGroup') : '未知分组';
+}
+
 async function prefetchProjectNamesForConversations(conversations) {
     const missing = new Set();
     for (const conv of conversations || []) {
@@ -8536,9 +8685,83 @@ async function refreshBatchProjectFilter() {
     syncProjectFilterCustomSelect(BATCH_PROJECT_FILTER_SELECT_ID);
 }
 
+async function refreshBatchGroupSelect() {
+    const sel = document.getElementById('batch-move-group-select');
+    if (!sel) return;
+
+    if (!Array.isArray(groupsCache) || groupsCache.length === 0) {
+        await loadGroups();
+    }
+
+    const saved = sel.value || BATCH_GROUP_NONE;
+    sel.innerHTML = '';
+
+    const noneOpt = document.createElement('option');
+    noneOpt.value = BATCH_GROUP_NONE;
+    noneOpt.textContent = projectFilterT('batchManageModal.noGroupOption', '无分组');
+    sel.appendChild(noneOpt);
+
+    (groupsCache || []).forEach((group) => {
+        const opt = document.createElement('option');
+        opt.value = group.id;
+        opt.textContent = `${group.icon || '📁'} ${group.name}`;
+        sel.appendChild(opt);
+    });
+
+    if (saved === BATCH_GROUP_NONE || (groupsCache || []).some((group) => group.id === saved)) {
+        sel.value = saved;
+    } else {
+        sel.value = BATCH_GROUP_NONE;
+    }
+    syncSimpleCustomSelect(BATCH_GROUP_FILTER_SELECT_ID);
+}
+
+function appendBatchGroupHeaderFilterNativeOptions(sel) {
+    const allLabel = projectFilterT('batchManageModal.filterAllGroups', '全部分组');
+    const ungroupedLabel = projectFilterT('batchManageModal.filterUngrouped', '无分组');
+    sel.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = '';
+    allOpt.textContent = allLabel;
+    allOpt.setAttribute('data-i18n', 'batchManageModal.filterAllGroups');
+    sel.appendChild(allOpt);
+    const ungroupedOpt = document.createElement('option');
+    ungroupedOpt.value = BATCH_GROUP_NONE;
+    ungroupedOpt.textContent = ungroupedLabel;
+    ungroupedOpt.setAttribute('data-i18n', 'batchManageModal.filterUngrouped');
+    sel.appendChild(ungroupedOpt);
+}
+
+async function refreshBatchGroupHeaderFilter() {
+    const sel = document.getElementById(BATCH_GROUP_HEADER_FILTER_SELECT_ID);
+    if (!sel) return;
+
+    if (!Array.isArray(groupsCache) || groupsCache.length === 0) {
+        await loadGroups();
+    }
+
+    const saved = sel.value || '';
+    appendBatchGroupHeaderFilterNativeOptions(sel);
+
+    (groupsCache || []).forEach((group) => {
+        const opt = document.createElement('option');
+        opt.value = group.id;
+        opt.textContent = `${group.icon || '📁'} ${group.name}`;
+        sel.appendChild(opt);
+    });
+
+    if (saved === '' || saved === BATCH_GROUP_NONE || (groupsCache || []).some((group) => group.id === saved)) {
+        sel.value = saved;
+    } else {
+        sel.value = '';
+    }
+    syncSimpleCustomSelect(BATCH_GROUP_HEADER_FILTER_SELECT_ID);
+}
+
 function getBatchFilteredConversations() {
     const query = (document.getElementById('batch-search-input')?.value || '').trim().toLowerCase();
     const projectFilter = (document.getElementById('batch-project-filter')?.value || '').trim();
+    const groupFilter = (document.getElementById(BATCH_GROUP_HEADER_FILTER_SELECT_ID)?.value || '').trim();
     return allConversationsForBatch.filter((conv) => {
         const pid = getConversationProjectId(conv);
         if (projectFilter) {
@@ -8548,10 +8771,19 @@ function getBatchFilteredConversations() {
                 return false;
             }
         }
+        const gid = getConversationGroupId(conv);
+        if (groupFilter) {
+            if (groupFilter === BATCH_GROUP_NONE) {
+                if (gid) return false;
+            } else if (gid !== groupFilter) {
+                return false;
+            }
+        }
         if (!query) return true;
         const title = (conv.title || '').toLowerCase();
         const projectName = getConversationProjectLabel(conv).toLowerCase();
-        return title.includes(query) || projectName.includes(query);
+        const groupName = getConversationGroupLabel(conv).toLowerCase();
+        return title.includes(query) || projectName.includes(query) || groupName.includes(query);
     });
 }
 
@@ -8574,8 +8806,16 @@ async function showBatchManageModal() {
     try {
         initProjectFilterCustomSelect(BATCH_PROJECT_FILTER_SELECT_ID);
         allConversationsForBatch = await fetchAllConversations('');
-        await prefetchProjectNamesForConversations(allConversationsForBatch);
+        await Promise.all([
+            prefetchProjectNamesForConversations(allConversationsForBatch),
+            loadGroups(),
+            loadConversationGroupMapping(),
+        ]);
         await refreshBatchProjectFilter();
+        initBatchGroupHeaderFilterCustomSelect();
+        await refreshBatchGroupHeaderFilter();
+        initBatchGroupCustomSelect();
+        await refreshBatchGroupSelect();
         const sidebarFilter = getConversationProjectFilter();
         const batchSel = document.getElementById('batch-project-filter');
         if (batchSel && sidebarFilter && (
@@ -8591,8 +8831,10 @@ async function showBatchManageModal() {
     } catch (error) {
         console.error('加载对话列表失败:', error);
         initProjectFilterCustomSelect(BATCH_PROJECT_FILTER_SELECT_ID);
+        initBatchGroupHeaderFilterCustomSelect();
+        initBatchGroupCustomSelect();
         allConversationsForBatch = [];
-        await refreshBatchProjectFilter();
+        await Promise.all([refreshBatchProjectFilter(), refreshBatchGroupHeaderFilter(), refreshBatchGroupSelect()]);
         applyBatchConversationFilters();
         openAppModal('batch-manage-modal', { focus: false });
     }
@@ -8677,6 +8919,16 @@ function renderBatchConversations(filtered = null) {
             project.classList.add('is-unbound');
         }
 
+        const group = document.createElement('div');
+        group.className = 'batch-table-col-group';
+        const groupLabel = getConversationGroupLabel(conv);
+        const truncatedGroup = safeTruncateText(groupLabel, 24);
+        group.textContent = truncatedGroup;
+        group.title = groupLabel;
+        if (!getConversationGroupId(conv)) {
+            group.classList.add('is-unbound');
+        }
+
         const time = document.createElement('div');
         time.className = 'batch-table-col-time';
         const dateObj = conv.updatedAt ? new Date(conv.updatedAt) : new Date();
@@ -8712,6 +8964,7 @@ function renderBatchConversations(filtered = null) {
         row.appendChild(checkboxCol);
         row.appendChild(name);
         row.appendChild(project);
+        row.appendChild(group);
         row.appendChild(time);
         row.appendChild(action);
 
@@ -8759,6 +9012,133 @@ function syncSelectAllBatchCheckbox() {
     }
 }
 
+// 批量设置对话分组（选「无分组」即移出）
+async function applyBatchGroupChange() {
+    const checkboxes = document.querySelectorAll('.batch-conversation-checkbox:checked');
+    if (checkboxes.length === 0) {
+        alert(typeof window.t === 'function' ? window.t('batchManageModal.confirmGroupChangeNone') : '请先选择要操作的对话');
+        return;
+    }
+
+    const groupSelect = document.getElementById('batch-move-group-select');
+    const groupId = (groupSelect?.value || BATCH_GROUP_NONE).trim();
+
+    if (groupId === BATCH_GROUP_NONE) {
+        const items = Array.from(checkboxes).map((cb) => ({
+            id: cb.dataset.conversationId,
+            groupId: conversationGroupMappingCache[cb.dataset.conversationId] || '',
+        })).filter((item) => item.groupId);
+
+        if (items.length === 0) {
+            alert(typeof window.t === 'function' ? window.t('batchManageModal.confirmRemoveNoGroup') : '所选对话均未归属分组');
+            return;
+        }
+
+        const confirmMsg = typeof window.t === 'function'
+            ? window.t('batchManageModal.confirmRemoveN', { count: items.length })
+            : `确定将选中的 ${items.length} 条对话移出分组吗？`;
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+
+        try {
+            for (const item of items) {
+                await apiFetch(`/api/groups/${item.groupId}/conversations/${item.id}`, {
+                    method: 'DELETE',
+                });
+
+                delete conversationGroupMappingCache[item.id];
+                delete pendingGroupMappings[item.id];
+
+                if (currentConversationId === item.id) {
+                    currentConversationGroupId = null;
+                }
+            }
+
+            await finishBatchGroupChangeAfterRemove();
+        } catch (error) {
+            console.error('批量移出分组失败:', error);
+            await loadConversationGroupMapping();
+            applyBatchConversationFilters();
+            const failedMsg = typeof window.t === 'function' ? window.t('batchManageModal.removeFailed') : '移出失败';
+            const unknownErr = typeof window.t === 'function' ? window.t('createGroupModal.unknownError') : '未知错误';
+            alert(failedMsg + ': ' + (error.message || unknownErr));
+        }
+        return;
+    }
+
+    const targetGroup = (groupsCache || []).find((group) => group.id === groupId);
+    const groupName = targetGroup ? targetGroup.name : groupId;
+    const confirmMsg = typeof window.t === 'function'
+        ? window.t('batchManageModal.confirmMoveN', { count: checkboxes.length, group: groupName })
+        : `确定将选中的 ${checkboxes.length} 条对话移动到「${groupName}」吗？`;
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+
+    const ids = Array.from(checkboxes).map((cb) => cb.dataset.conversationId);
+
+    try {
+        for (const id of ids) {
+            await apiFetch('/api/groups/conversations', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    conversationId: id,
+                    groupId,
+                }),
+            });
+
+            conversationGroupMappingCache[id] = groupId;
+            pendingGroupMappings[id] = groupId;
+
+            if (currentConversationId === id) {
+                currentConversationGroupId = groupId;
+            }
+        }
+
+        if (currentGroupId) {
+            await loadGroupConversations(currentGroupId);
+        }
+        await loadConversationsWithGroups();
+        await loadGroups();
+        resetBatchSelectionAfterGroupChange();
+    } catch (error) {
+        console.error('批量移动对话失败:', error);
+        await loadConversationGroupMapping();
+        applyBatchConversationFilters();
+        const failedMsg = typeof window.t === 'function' ? window.t('batchManageModal.moveFailed') : '移动失败';
+        const unknownErr = typeof window.t === 'function' ? window.t('createGroupModal.unknownError') : '未知错误';
+        alert(failedMsg + ': ' + (error.message || unknownErr));
+    }
+}
+
+function resetBatchSelectionAfterGroupChange() {
+    applyBatchConversationFilters();
+    const selectAll = document.getElementById('batch-select-all');
+    if (selectAll) {
+        selectAll.checked = false;
+        selectAll.indeterminate = false;
+    }
+}
+
+async function finishBatchGroupChangeAfterRemove() {
+    if (currentGroupId) {
+        await loadGroupConversations(currentGroupId);
+    }
+    await loadConversationGroupMapping();
+    await loadGroups();
+
+    const savedGroupId = currentGroupId;
+    currentGroupId = null;
+    await loadConversationsWithGroups();
+    currentGroupId = savedGroupId;
+
+    resetBatchSelectionAfterGroupChange();
+}
+
 // 删除选中的对话
 async function deleteSelectedConversations() {
     const checkboxes = document.querySelectorAll('.batch-conversation-checkbox:checked');
@@ -8794,6 +9174,7 @@ async function deleteSelectedConversations() {
 
 // 关闭批量管理模态框
 function closeBatchManageModal() {
+    closeAllProjectFilterCustomSelects();
     closeAppModal('batch-manage-modal');
     const selectAll = document.getElementById('batch-select-all');
     if (selectAll) {
@@ -8804,6 +9185,12 @@ function closeBatchManageModal() {
     if (searchInput) searchInput.value = '';
     const batchProj = document.getElementById('batch-project-filter');
     if (batchProj) batchProj.value = '';
+    const batchGroupFilter = document.getElementById(BATCH_GROUP_HEADER_FILTER_SELECT_ID);
+    if (batchGroupFilter) batchGroupFilter.value = '';
+    syncSimpleCustomSelect(BATCH_GROUP_HEADER_FILTER_SELECT_ID);
+    const batchGroup = document.getElementById('batch-move-group-select');
+    if (batchGroup) batchGroup.value = BATCH_GROUP_NONE;
+    syncSimpleCustomSelect(BATCH_GROUP_FILTER_SELECT_ID);
     allConversationsForBatch = [];
 }
 
@@ -8884,6 +9271,12 @@ document.addEventListener('languagechange', function () {
                 applyBatchConversationFilters();
             }
         });
+    }
+    if (typeof refreshBatchGroupSelect === 'function') {
+        refreshBatchGroupSelect().then(() => syncSimpleCustomSelect(BATCH_GROUP_FILTER_SELECT_ID));
+    }
+    if (typeof refreshBatchGroupHeaderFilter === 'function') {
+        refreshBatchGroupHeaderFilter();
     }
     // 侧边栏最近对话等列表的时间戳会随语言变化（24h/12h 等），重新拉列表以统一格式
     if (typeof loadConversationsWithGroups === 'function') {

@@ -1229,10 +1229,9 @@ function collapseAllProgressDetails(assistantMessageId, progressId) {
     if (assistantMessageId) {
         const detailsId = 'process-details-' + assistantMessageId;
         const detailsContainer = document.getElementById(detailsId);
-        if (detailsContainer) {
+        if (detailsContainer && detailsContainer.dataset.userExpanded !== '1') {
             const timeline = detailsContainer.querySelector('.progress-timeline');
             if (timeline) {
-                // 确保移除expanded类（无论是否包含）
                 timeline.classList.remove('expanded');
                 document.querySelectorAll(`#${assistantMessageId} .process-detail-btn`).forEach((btn) => {
                     btn.innerHTML = '<span>' + (typeof window.t === 'function' ? window.t('chat.expandDetail') : '展开详情') + '</span>';
@@ -1421,6 +1420,9 @@ function toggleProcessDetails(progressId, assistantMessageId) {
     const detailsContainer = document.getElementById(detailsId);
     if (!detailsContainer) return;
 
+    const expandT = typeof window.t === 'function' ? window.t('chat.expandDetail') : '展开详情';
+    const collapseT = typeof window.t === 'function' ? window.t('tasks.collapseDetail') : '收起详情';
+
     // 懒加载：首次展开时才从后端拉取该条消息的过程详情
     const maybeLazy = detailsContainer.dataset && detailsContainer.dataset.lazyNotLoaded === '1' && detailsContainer.dataset.loaded !== '1';
     if (maybeLazy) {
@@ -1447,6 +1449,19 @@ function toggleProcessDetails(progressId, assistantMessageId) {
                     })
                     .finally(() => {
                         detailsContainer.dataset.loading = '0';
+                        if (detailsContainer.dataset.userExpanded === '1') {
+                            const tl = detailsContainer.querySelector('.progress-timeline');
+                            if (tl) {
+                                tl.classList.add('expanded');
+                            }
+                            if (typeof syncProcessDetailButtonLabels === 'function') {
+                                syncProcessDetailButtonLabels(assistantMessageId, true);
+                            } else {
+                                document.querySelectorAll('#' + assistantMessageId + ' .process-detail-btn').forEach((btn) => {
+                                    btn.innerHTML = '<span>' + collapseT + '</span>';
+                                });
+                            }
+                        }
                     });
             }
         }
@@ -1456,27 +1471,25 @@ function toggleProcessDetails(progressId, assistantMessageId) {
     const timeline = detailsContainer.querySelector('.progress-timeline');
     const detailBtns = document.querySelectorAll(`#${assistantMessageId} .process-detail-btn`);
     
-    const expandT = typeof window.t === 'function' ? window.t('chat.expandDetail') : '展开详情';
-    const collapseT = typeof window.t === 'function' ? window.t('tasks.collapseDetail') : '收起详情';
     const setDetailBtnLabels = (label) => {
         detailBtns.forEach((btn) => { btn.innerHTML = '<span>' + label + '</span>'; });
     };
+    const setExpanded = (expanded) => {
+        if (!timeline) return;
+        if (expanded) {
+            timeline.classList.add('expanded');
+            detailsContainer.dataset.userExpanded = '1';
+            setDetailBtnLabels(collapseT);
+        } else {
+            timeline.classList.remove('expanded');
+            delete detailsContainer.dataset.userExpanded;
+            setDetailBtnLabels(expandT);
+        }
+    };
     if (content && timeline) {
-        if (timeline.classList.contains('expanded')) {
-            timeline.classList.remove('expanded');
-            setDetailBtnLabels(expandT);
-        } else {
-            timeline.classList.add('expanded');
-            setDetailBtnLabels(collapseT);
-        }
+        setExpanded(!timeline.classList.contains('expanded'));
     } else if (timeline) {
-        if (timeline.classList.contains('expanded')) {
-            timeline.classList.remove('expanded');
-            setDetailBtnLabels(expandT);
-        } else {
-            timeline.classList.add('expanded');
-            setDetailBtnLabels(collapseT);
-        }
+        setExpanded(!timeline.classList.contains('expanded'));
     }
     
     // 滚动到展开的详情位置（流式且用户上滑阅读时不抢主列表滚动）
@@ -3101,10 +3114,15 @@ function expandProcessDetailsTimeline(assistantMessageId) {
     const timeline = detailsContainer.querySelector('.progress-timeline');
     if (!timeline) return;
     timeline.classList.add('expanded');
-    const collapseT = typeof window.t === 'function' ? window.t('tasks.collapseDetail') : '收起详情';
-    document.querySelectorAll('#' + hitlEscapeAttrSelector(assistantMessageId) + ' .process-detail-btn').forEach(function (btn) {
-        btn.innerHTML = '<span>' + collapseT + '</span>';
-    });
+    detailsContainer.dataset.userExpanded = '1';
+    if (typeof syncProcessDetailButtonLabels === 'function') {
+        syncProcessDetailButtonLabels(assistantMessageId, true);
+    } else {
+        const collapseT = typeof window.t === 'function' ? window.t('tasks.collapseDetail') : '收起详情';
+        document.querySelectorAll('#' + hitlEscapeAttrSelector(assistantMessageId) + ' .process-detail-btn').forEach(function (btn) {
+            btn.innerHTML = '<span>' + collapseT + '</span>';
+        });
+    }
     setTimeout(function () {
         if (window.CyberStrikeChatScroll && typeof window.CyberStrikeChatScroll.scrollIntoViewIfFollowing === 'function') {
             window.CyberStrikeChatScroll.scrollIntoViewIfFollowing(detailsContainer, { behavior: 'smooth', block: 'nearest' });

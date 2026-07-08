@@ -4533,6 +4533,10 @@
                         <option value="" data-i18n="chat.filterAllProjects">全部项目</option>
                         <option value="__none__" data-i18n="chat.filterUnboundProjects">未绑定项目</option>
                     </select>
+                    <select id="batch-group-filter" class="conversation-project-filter-native" onchange="applyBatchConversationFilters()" data-i18n="batchManageModal.filterByGroup" data-i18n-attr="title" title="按分组筛选">
+                        <option value="" data-i18n="batchManageModal.filterAllGroups">全部分组</option>
+                        <option value="__none__" data-i18n="batchManageModal.filterUngrouped">无分组</option>
+                    </select>
                     <div class="batch-search-box">
                         <input type="text" id="batch-search-input" data-i18n="batchManageModal.searchPlaceholder" data-i18n-attr="placeholder" placeholder="搜索历史记录" oninput="filterBatchConversations(this.value)" />
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -4551,6 +4555,7 @@
                         </div>
                         <div class="batch-table-col-name" data-i18n="batchManageModal.conversationName">对话名称</div>
                         <div class="batch-table-col-project" data-i18n="batchManageModal.project">项目</div>
+                        <div class="batch-table-col-group" data-i18n="batchManageModal.group">对话分组</div>
                         <div class="batch-table-col-time" data-i18n="batchManageModal.lastTime">最近一次对话时间</div>
                         <div class="batch-table-col-action" data-i18n="batchManageModal.action">操作</div>
                     </div>
@@ -4558,6 +4563,12 @@
                 </div>
             </div>
             <div class="modal-footer batch-manage-footer">
+                <div class="batch-footer-move">
+                    <select id="batch-move-group-select" class="batch-move-group-select conversation-project-filter-native" data-i18n="batchManageModal.setGroup" data-i18n-attr="title" title="设置分组">
+                        <option value="__none__" data-i18n="batchManageModal.noGroupOption">无分组</option>
+                    </select>
+                    <button type="button" class="btn-secondary" onclick="applyBatchGroupChange()" data-i18n="batchManageModal.setGroup">设置分组</button>
+                </div>
                 <div class="batch-footer-actions">
                     <button class="btn-secondary" onclick="closeBatchManageModal()" data-i18n="common.cancel">取消</button>
                     <button class="btn-primary" onclick="deleteSelectedConversations()" data-i18n="batchManageModal.deleteSelected">删除所选</button>
