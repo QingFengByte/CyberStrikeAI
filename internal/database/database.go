@@ -478,6 +478,7 @@ func (db *DB) initTables() error {
 		status TEXT NOT NULL DEFAULT 'stopped',
 		config_json TEXT NOT NULL DEFAULT '{}',
 		remark TEXT NOT NULL DEFAULT '',
+		owner_user_id TEXT,
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		started_at DATETIME,
 		last_error TEXT
@@ -783,6 +784,10 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建audit_logs表失败: %w", err)
 	}
 
+	if err := db.initRBACTables(); err != nil {
+		return fmt.Errorf("创建RBAC表失败: %w", err)
+	}
+
 	for tableName, ddl := range map[string]string{
 		"workflow_definitions": createWorkflowDefinitionsTable,
 		"workflow_runs":        createWorkflowRunsTable,
@@ -852,6 +857,9 @@ func (db *DB) initTables() error {
 	}
 	if err := db.migrateWorkflowRunsTable(); err != nil {
 		db.logger.Warn("迁移workflow_runs表失败", zap.Error(err))
+	}
+	if err := db.migrateRBACOwnershipColumns(); err != nil {
+		db.logger.Warn("迁移RBAC资源归属字段失败", zap.Error(err))
 	}
 
 	if _, err := db.Exec(createIndexes); err != nil {

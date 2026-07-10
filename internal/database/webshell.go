@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -59,13 +60,30 @@ func (db *DB) UpsertWebshellConnectionState(connectionID, stateJSON string) erro
 
 // ListWebshellConnections 列出所有 WebShell 连接，按创建时间倒序
 func (db *DB) ListWebshellConnections() ([]WebShellConnection, error) {
+	return db.ListWebshellConnectionsForAccess("", "")
+}
+
+func (db *DB) ListWebshellConnectionsForAccess(userID, scope string) ([]WebShellConnection, error) {
 	query := `
 		SELECT id, url, password, type, method, cmd_param, remark,
 			COALESCE(encoding, '') AS encoding, COALESCE(os, '') AS os, created_at
 		FROM webshell_connections
-		ORDER BY created_at DESC
+		WHERE 1=1
 	`
-	rows, err := db.Query(query)
+	args := []interface{}{}
+	userID = strings.TrimSpace(userID)
+	if userID != "" && scope != RBACScopeAll {
+		query += ` AND (
+			owner_user_id = ?
+			OR EXISTS (
+				SELECT 1 FROM rbac_resource_assignments ra
+				WHERE ra.user_id = ? AND ra.resource_type = 'webshell' AND ra.resource_id = webshell_connections.id
+			)
+		)`
+		args = append(args, userID, userID)
+	}
+	query += ` ORDER BY created_at DESC`
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		db.logger.Error("查询 WebShell 连接列表失败", zap.Error(err))
 		return nil, err

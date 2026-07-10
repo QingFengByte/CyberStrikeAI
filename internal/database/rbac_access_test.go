@@ -1,0 +1,401 @@
+package database
+
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+)
+
+func newRBACTestDB(t *testing.T) *DB {
+	t.Helper()
+	db, err := NewDB(filepath.Join(t.TempDir(), "rbac.db"), zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewDB: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func TestRBACProjectAndConversationListAccess(t *testing.T) {
+	db := newRBACTestDB(t)
+	p1, _ := db.CreateProject(&Project{Name: "visible"})
+	p2, _ := db.CreateProject(&Project{Name: "hidden"})
+	if err := db.SetResourceOwner("project", p1.ID, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	c1, _ := db.CreateConversation("visible conv", ConversationCreateMeta{ProjectID: p1.ID})
+	c2, _ := db.CreateConversation("hidden conv", ConversationCreateMeta{ProjectID: p2.ID})
+	_ = db.SetResourceOwner("conversation", c1.ID, "u1")
+	_ = db.SetResourceOwner("conversation", c2.ID, "u2")
+
+	projects, err := db.ListProjectsForAccess("", "", 50, 0, "u1", RBACScopeOwn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 || projects[0].ID != p1.ID {
+		t.Fatalf("projects = %#v, want only %s", projects, p1.ID)
+	}
+
+	convs, err := db.ListConversationsForAccess(50, 0, "", "", "", "u1", RBACScopeOwn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(convs) != 1 || convs[0].ID != c1.ID {
+		t.Fatalf("conversations = %#v, want only %s", convs, c1.ID)
+	}
+}
+
+func TestRBACVulnerabilityAccessInheritsProject(t *testing.T) {
+	db := newRBACTestDB(t)
+	user, err := db.CreateRBACUser("u1", "User 1", "hash", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1, _ := db.CreateProject(&Project{Name: "visible"})
+	p2, _ := db.CreateProject(&Project{Name: "hidden"})
+	if err := db.AssignResourceToUser(user.ID, "project", p1.ID); err != nil {
+		t.Fatal(err)
+	}
+	v1, _ := db.CreateVulnerability(&Vulnerability{ProjectID: p1.ID, Title: "v1", Severity: "high"})
+	v2, _ := db.CreateVulnerability(&Vulnerability{ProjectID: p2.ID, Title: "v2", Severity: "high"})
+
+	items, err := db.ListVulnerabilitiesForAccess(50, 0, VulnerabilityListFilter{}, RBACListAccess{UserID: user.ID, Scope: RBACScopeAssigned})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].ID != v1.ID {
+		t.Fatalf("vulnerabilities = %#v, want only %s; hidden %s", items, v1.ID, v2.ID)
+	}
+	if !db.UserCanAccessResource(user.ID, RBACScopeAssigned, "vulnerability", v1.ID) {
+		t.Fatalf("expected project assignment to allow vulnerability detail")
+	}
+	if db.UserCanAccessResource(user.ID, RBACScopeAssigned, "vulnerability", v2.ID) {
+		t.Fatalf("unexpected access to hidden vulnerability")
+	}
+}
+
+func TestRBACConversationAccessInheritsProject(t *testing.T) {
+	db := newRBACTestDB(t)
+	user, err := db.CreateRBACUser("project-member", "Project Member", "hash", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := db.CreateProject(&Project{Name: "assigned project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := db.CreateConversation("project conversation", ConversationCreateMeta{ProjectID: project.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AssignResourceToUser(user.ID, "project", project.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := db.ListConversationsForAccess(50, 0, "", "", "", user.ID, RBACScopeAssigned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].ID != conversation.ID {
+		t.Fatalf("conversations = %#v, want project conversation %s", rows, conversation.ID)
+	}
+	if !db.UserCanAccessResource(user.ID, RBACScopeAssigned, "conversation", conversation.ID) {
+		t.Fatal("expected project assignment to allow conversation detail")
+	}
+}
+
+func TestRBACBatchResourceAssignmentValidationAndAtomicity(t *testing.T) {
+	db := newRBACTestDB(t)
+	user, err := db.CreateRBACUser("batch-member", "Batch Member", "hash", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1, err := db.CreateProject(&Project{Name: "p1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := db.CreateProject(&Project{Name: "p2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p3, err := db.CreateProject(&Project{Name: "p3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := db.ListAssignableRBACResources("project", "p1", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options) != 1 || options[0].ID != p1.ID || options[0].Label != "p1" {
+		t.Fatalf("resource options = %#v, want p1", options)
+	}
+	firstPage, err := db.ListAssignableRBACResourcesPage("project", "", 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPage, err := db.ListAssignableRBACResourcesPage("project", "", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstPage) != 2 || len(secondPage) != 1 {
+		t.Fatalf("paged resource options = %d + %d, want 2 + 1", len(firstPage), len(secondPage))
+	}
+	seen := map[string]bool{}
+	for _, option := range append(firstPage, secondPage...) {
+		seen[option.ID] = true
+	}
+	if !seen[p1.ID] || !seen[p2.ID] || !seen[p3.ID] {
+		t.Fatalf("paged resource options missed resources: %#v", seen)
+	}
+	if _, err := db.ListAssignableRBACResources("secret_table", "", 50); err == nil {
+		t.Fatal("expected unsupported picker resource type to fail")
+	}
+
+	if _, err := db.AssignResourcesToUser(user.ID, "unknown_type", []string{p1.ID}); err == nil {
+		t.Fatal("expected unsupported resource type to fail")
+	}
+	if _, err := db.AssignResourcesToUser(user.ID, "project", []string{p1.ID, "missing-project"}); err == nil {
+		t.Fatal("expected missing resource to fail the entire batch")
+	}
+	rows, err := db.ListRBACResourceAssignments(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("partial grants persisted after failed batch: %#v", rows)
+	}
+
+	created, err := db.AssignResourcesToUser(user.ID, "project", []string{p1.ID, p1.ID, p2.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created != 2 {
+		t.Fatalf("created = %d, want 2 unique grants", created)
+	}
+	created, err = db.AssignResourcesToUser(user.ID, "project", []string{p1.ID, p2.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created != 0 {
+		t.Fatalf("idempotent retry created = %d, want 0", created)
+	}
+	rows, err = db.ListRBACResourceAssignments(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("assignment count = %d, want 2", len(rows))
+	}
+}
+
+func TestRBACWebshellAndBatchListAccess(t *testing.T) {
+	db := newRBACTestDB(t)
+	ws1 := WebShellConnection{ID: "ws_visible", URL: "http://a", Type: "php", Method: "post", CreatedAt: time.Now()}
+	ws2 := WebShellConnection{ID: "ws_hidden", URL: "http://b", Type: "php", Method: "post", CreatedAt: time.Now()}
+	if err := db.CreateWebshellConnection(&ws1); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateWebshellConnection(&ws2); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.SetResourceOwner("webshell", ws1.ID, "u1")
+	_ = db.SetResourceOwner("webshell", ws2.ID, "u2")
+	webshells, err := db.ListWebshellConnectionsForAccess("u1", RBACScopeOwn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(webshells) != 1 || webshells[0].ID != ws1.ID {
+		t.Fatalf("webshells = %#v, want only %s", webshells, ws1.ID)
+	}
+
+	if err := db.CreateBatchQueue("q_visible", "visible", "", "eino_single", "manual", "", nil, "", 1, []map[string]interface{}{{"id": "t1", "message": "a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateBatchQueue("q_hidden", "hidden", "", "eino_single", "manual", "", nil, "", 1, []map[string]interface{}{{"id": "t2", "message": "b"}}); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.SetResourceOwner("batch_task", "q_visible", "u1")
+	_ = db.SetResourceOwner("batch_task", "q_hidden", "u2")
+	queues, err := db.ListBatchQueuesForAccess(50, 0, "all", "", "u1", RBACScopeOwn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queues) != 1 || queues[0].ID != "q_visible" {
+		t.Fatalf("queues = %#v, want only q_visible", queues)
+	}
+}
+
+func TestRBACC2AccessInheritsListener(t *testing.T) {
+	db := newRBACTestDB(t)
+	now := time.Now()
+	l1 := &C2Listener{ID: "l_visible", Name: "visible", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9001, OwnerUserID: "u1", CreatedAt: now}
+	l2 := &C2Listener{ID: "l_hidden", Name: "hidden", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9002, OwnerUserID: "u2", CreatedAt: now}
+	if err := db.CreateC2Listener(l1); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateC2Listener(l2); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertC2Session(&C2Session{ID: "s_visible", ListenerID: l1.ID, ImplantUUID: "implant-visible", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertC2Session(&C2Session{ID: "s_hidden", ListenerID: l2.ID, ImplantUUID: "implant-hidden", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateC2Task(&C2Task{ID: "t_visible", SessionID: "s_visible", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateC2Task(&C2Task{ID: "t_hidden", SessionID: "s_hidden", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AppendC2Event(&C2Event{ID: "e_visible", Level: "info", Category: "task", SessionID: "s_visible", TaskID: "t_visible", Message: "visible", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AppendC2Event(&C2Event{ID: "e_hidden", Level: "info", Category: "task", SessionID: "s_hidden", TaskID: "t_hidden", Message: "hidden", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	access := RBACListAccess{UserID: "u1", Scope: RBACScopeOwn}
+	listeners, err := db.ListC2ListenersForAccess(access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listeners) != 1 || listeners[0].ID != l1.ID {
+		t.Fatalf("listeners = %#v, want only %s", listeners, l1.ID)
+	}
+	sessions, err := db.ListC2SessionsForAccess(ListC2SessionsFilter{}, access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != "s_visible" {
+		t.Fatalf("sessions = %#v, want only s_visible", sessions)
+	}
+	tasks, err := db.ListC2TasksForAccess(ListC2TasksFilter{}, access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "t_visible" {
+		t.Fatalf("tasks = %#v, want only t_visible", tasks)
+	}
+	events, err := db.ListC2EventsForAccess(ListC2EventsFilter{}, access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].ID != "e_visible" {
+		t.Fatalf("events = %#v, want only e_visible", events)
+	}
+	if !db.UserCanAccessResource("u1", RBACScopeOwn, "c2_task", "t_visible") {
+		t.Fatalf("expected listener ownership to allow task detail")
+	}
+	if db.UserCanAccessResource("u1", RBACScopeOwn, "c2_task", "t_hidden") {
+		t.Fatalf("unexpected access to hidden task")
+	}
+}
+
+func TestRBACC2AssignedDeleteIsScoped(t *testing.T) {
+	db := newRBACTestDB(t)
+	user, err := db.CreateRBACUser("u1", "User 1", "hash", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := db.CreateC2Listener(&C2Listener{ID: "l_assigned", Name: "assigned", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9001, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateC2Listener(&C2Listener{ID: "l_hidden", Name: "hidden", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9002, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AssignResourceToUser(user.ID, "c2_listener", "l_assigned"); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct {
+		sessionID string
+		listener  string
+		taskID    string
+		eventID   string
+	}{
+		{"s_assigned", "l_assigned", "t_assigned", "e_assigned"},
+		{"s_hidden", "l_hidden", "t_hidden", "e_hidden"},
+	} {
+		if err := db.UpsertC2Session(&C2Session{ID: row.sessionID, ListenerID: row.listener, ImplantUUID: row.sessionID + "_uuid", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.CreateC2Task(&C2Task{ID: row.taskID, SessionID: row.sessionID, TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.AppendC2Event(&C2Event{ID: row.eventID, Level: "info", Category: "task", SessionID: row.sessionID, TaskID: row.taskID, Message: row.eventID, CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	access := RBACListAccess{UserID: user.ID, Scope: RBACScopeAssigned}
+	n, err := db.DeleteC2TasksByIDsForAccess([]string{"t_assigned", "t_hidden"}, access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("deleted tasks = %d, want 1", n)
+	}
+	if task, _ := db.GetC2Task("t_hidden"); task == nil {
+		t.Fatalf("hidden task was deleted")
+	}
+	n, err = db.DeleteC2EventsByIDsForAccess([]string{"e_assigned", "e_hidden"}, access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("deleted events = %d, want 1", n)
+	}
+	hiddenEvents, err := db.ListC2Events(ListC2EventsFilter{TaskID: "t_hidden"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hiddenEvents) != 1 {
+		t.Fatalf("hidden event count = %d, want 1", len(hiddenEvents))
+	}
+}
+
+func TestRBACAssignmentLabelsAndWeakTitles(t *testing.T) {
+	db := newRBACTestDB(t)
+	user, err := db.CreateRBACUser("label-member", "Label Member", "hash", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := db.CreateProject(&Project{Name: "Alpha Project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := db.CreateConversation("1", ConversationCreateMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.AssignResourcesToUser(user.ID, "project", []string{project.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	options, err := db.ListAssignableRBACResources("conversation", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options) == 0 {
+		t.Fatal("expected conversation options")
+	}
+	for _, option := range options {
+		if option.ID == conversation.ID && !strings.Contains(option.Label, "1 ·") {
+			t.Fatalf("weak conversation label = %q, want suffix with short id", option.Label)
+		}
+	}
+
+	rows, err := db.ListRBACResourceAssignments(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("assignments = %#v, want 1", rows)
+	}
+	if rows[0].ResourceLabel != "Alpha Project" {
+		t.Fatalf("assignment label = %q, want Alpha Project", rows[0].ResourceLabel)
+	}
+}

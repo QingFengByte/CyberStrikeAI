@@ -78,8 +78,8 @@ func buildAuditLogsWhere(filter ListAuditLogsFilter) (string, []interface{}) {
 	}
 	if q := strings.TrimSpace(filter.Query); q != "" {
 		like := "%" + q + "%"
-		conditions = append(conditions, "(message LIKE ? OR resource_id LIKE ? OR action LIKE ? OR category LIKE ?)")
-		args = append(args, like, like, like, like)
+		conditions = append(conditions, "(message LIKE ? OR resource_id LIKE ? OR action LIKE ? OR category LIKE ? OR detail_json LIKE ?)")
+		args = append(args, like, like, like, like, like)
 	}
 	return strings.Join(conditions, " AND "), args
 }

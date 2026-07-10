@@ -384,6 +384,31 @@ func appendConversationProjectFilter(where string, args []interface{}, projectID
 	return where + fmt.Sprintf(" AND %s = ?", col), append(args, pid)
 }
 
+func appendConversationAccessFilter(where string, args []interface{}, userID, scope, alias string) (string, []interface{}) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || scope == RBACScopeAll {
+		return where, args
+	}
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	where += fmt.Sprintf(` AND (%sowner_user_id = ? OR EXISTS (
+		SELECT 1 FROM rbac_resource_assignments ra
+		WHERE ra.user_id = ? AND ra.resource_type = 'conversation' AND ra.resource_id = %sid
+	) OR EXISTS (
+		SELECT 1 FROM projects p
+		WHERE p.id = %sproject_id AND (
+			p.owner_user_id = ? OR EXISTS (
+				SELECT 1 FROM rbac_resource_assignments pra
+				WHERE pra.user_id = ? AND pra.resource_type = 'project' AND pra.resource_id = p.id
+			)
+		)
+	))`, prefix, prefix, prefix)
+	args = append(args, userID, userID, userID, userID)
+	return where, args
+}
+
 // CountConversations 统计对话数量。
 func (db *DB) CountConversations(search, projectID string) (int, error) {
 	var count int
@@ -399,6 +424,33 @@ func (db *DB) CountConversations(search, projectID string) (int, error) {
 		where := ""
 		args := []interface{}{}
 		where, args = appendConversationProjectFilter(where, args, projectID, "")
+		if where != "" {
+			where = " WHERE" + strings.TrimPrefix(where, " AND")
+		}
+		err = db.QueryRow(`SELECT COUNT(*) FROM conversations`+where, args...).Scan(&count)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("统计对话失败: %w", err)
+	}
+	return count, nil
+}
+
+func (db *DB) CountConversationsForAccess(search, projectID, userID, scope string) (int, error) {
+	var count int
+	var err error
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		where := ` WHERE (c.title LIKE ?
+			    OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ?))`
+		args := []interface{}{searchPattern, searchPattern}
+		where, args = appendConversationProjectFilter(where, args, projectID, "c")
+		where, args = appendConversationAccessFilter(where, args, userID, scope, "c")
+		err = db.QueryRow(`SELECT COUNT(*) FROM conversations c`+where, args...).Scan(&count)
+	} else {
+		where := ""
+		args := []interface{}{}
+		where, args = appendConversationProjectFilter(where, args, projectID, "")
+		where, args = appendConversationAccessFilter(where, args, userID, scope, "")
 		if where != "" {
 			where = " WHERE" + strings.TrimPrefix(where, " AND")
 		}
@@ -503,6 +555,81 @@ func (db *DB) ListConversations(limit, offset int, search, sortBy, projectID str
 	return conversations, nil
 }
 
+func (db *DB) ListConversationsForAccess(limit, offset int, search, sortBy, projectID, userID, scope string) ([]*Conversation, error) {
+	if scope == RBACScopeAll || strings.TrimSpace(userID) == "" {
+		return db.ListConversations(limit, offset, search, sortBy, projectID)
+	}
+	var rows *sql.Rows
+	var err error
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		orderClause := conversationOrderClause(sortBy, "c")
+		where := ` WHERE (c.title LIKE ?
+			    OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ?))`
+		args := []interface{}{searchPattern, searchPattern}
+		where, args = appendConversationProjectFilter(where, args, projectID, "c")
+		where, args = appendConversationAccessFilter(where, args, userID, scope, "c")
+		args = append(args, limit, offset)
+		rows, err = db.Query(
+			`SELECT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at, c.project_id
+			 FROM conversations c`+where+`
+			 `+orderClause+`
+			 LIMIT ? OFFSET ?`, args...)
+	} else {
+		orderClause := conversationOrderClause(sortBy, "")
+		where := ""
+		args := []interface{}{}
+		where, args = appendConversationProjectFilter(where, args, projectID, "")
+		where, args = appendConversationAccessFilter(where, args, userID, scope, "")
+		if where != "" {
+			where = " WHERE" + strings.TrimPrefix(where, " AND")
+		}
+		args = append(args, limit, offset)
+		rows, err = db.Query(
+			"SELECT id, title, COALESCE(pinned, 0), created_at, updated_at, project_id FROM conversations"+where+" "+orderClause+" LIMIT ? OFFSET ?",
+			args...)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("查询对话列表失败: %w", err)
+	}
+	defer rows.Close()
+	return scanConversationRows(rows)
+}
+
+func scanConversationRows(rows *sql.Rows) ([]*Conversation, error) {
+	var conversations []*Conversation
+	for rows.Next() {
+		var conv Conversation
+		var createdAt, updatedAt string
+		var pinned int
+		var projectID sql.NullString
+		if err := rows.Scan(&conv.ID, &conv.Title, &pinned, &createdAt, &updatedAt, &projectID); err != nil {
+			return nil, fmt.Errorf("扫描对话失败: %w", err)
+		}
+		if projectID.Valid {
+			conv.ProjectID = strings.TrimSpace(projectID.String)
+		}
+		var err1, err2 error
+		conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
+		if err1 != nil {
+			conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05", createdAt)
+		}
+		if err1 != nil {
+			conv.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		}
+		conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt)
+		if err2 != nil {
+			conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05", updatedAt)
+		}
+		if err2 != nil {
+			conv.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		}
+		conv.Pinned = pinned != 0
+		conversations = append(conversations, &conv)
+	}
+	return conversations, rows.Err()
+}
+
 const ungroupedConversationsSQL = `
 	FROM conversations c
 	WHERE NOT EXISTS (
@@ -514,6 +641,18 @@ func (db *DB) CountUngroupedConversations(projectID string) (int, error) {
 	where := ungroupedConversationsSQL
 	args := []interface{}{}
 	where, args = appendConversationProjectFilter(where, args, projectID, "c")
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) `+where, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("统计未分组对话失败: %w", err)
+	}
+	return count, nil
+}
+
+func (db *DB) CountUngroupedConversationsForAccess(projectID, userID, scope string) (int, error) {
+	where := ungroupedConversationsSQL
+	args := []interface{}{}
+	where, args = appendConversationProjectFilter(where, args, projectID, "c")
+	where, args = appendConversationAccessFilter(where, args, userID, scope, "c")
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) `+where, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("统计未分组对话失败: %w", err)
@@ -576,6 +715,30 @@ func (db *DB) ListUngroupedConversations(limit, offset int, sortBy, projectID st
 	}
 
 	return conversations, rows.Err()
+}
+
+func (db *DB) ListUngroupedConversationsForAccess(limit, offset int, sortBy, projectID, userID, scope string) ([]*Conversation, error) {
+	if scope == RBACScopeAll || strings.TrimSpace(userID) == "" {
+		return db.ListUngroupedConversations(limit, offset, sortBy, projectID)
+	}
+	orderClause := conversationOrderClause(sortBy, "c")
+	where := ungroupedConversationsSQL
+	args := []interface{}{}
+	where, args = appendConversationProjectFilter(where, args, projectID, "c")
+	where, args = appendConversationAccessFilter(where, args, userID, scope, "c")
+	args = append(args, limit, offset)
+	rows, err := db.Query(
+		`SELECT c.id, c.title, COALESCE(c.pinned, 0), c.created_at, c.updated_at, c.project_id `+
+			where+`
+		 `+orderClause+`
+		 LIMIT ? OFFSET ?`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("查询未分组对话失败: %w", err)
+	}
+	defer rows.Close()
+	return scanConversationRows(rows)
 }
 
 // GetConversationTitle 获取对话标题（轻量查询，不加载消息）
@@ -1280,8 +1443,13 @@ func (db *DB) GetProcessDetailsSummary(messageID string) (*ProcessDetailsSummary
 		return nil, fmt.Errorf("查询工具执行摘要失败: %w", err)
 	}
 	seenExecIDs := make(map[string]bool)
-	toolIndexByCallID := make(map[string]int)
-	unmatchedToolIdx := 0
+	// A provider may reuse a fallback toolCallId across streaming rounds. Keep a
+	// FIFO per ID instead of a single index so every persisted call gets at most
+	// one result. Results without an ID fall back to the oldest unmatched call.
+	toolIndexesByCallID := make(map[string][]int)
+	lastMatchedToolIndexByCallID := make(map[string]int)
+	matchedToolIndexes := make([]bool, 0)
+	nextUnmatchedToolIdx := 0
 	for execRows.Next() {
 		var detailID string
 		var eventType string
@@ -1320,24 +1488,52 @@ func (db *DB) GetProcessDetailsSummary(messageID string) (*ProcessDetailsSummary
 				ProcessDetailID: strings.TrimSpace(detailID),
 				ToolName:        toolName,
 				ToolCallID:      toolCallID,
-				Status:          "running",
+				// This summary is reconstructed from persisted history, not live
+				// execution state. Until a matching result is found the honest state
+				// is "result_missing", never "running".
+				Status: "result_missing",
 			})
+			matchedToolIndexes = append(matchedToolIndexes, false)
 			if toolCallID != "" {
-				toolIndexByCallID[toolCallID] = len(summary.ToolExecutions) - 1
+				toolIndexesByCallID[toolCallID] = append(toolIndexesByCallID[toolCallID], len(summary.ToolExecutions)-1)
 			}
 		}
 		if eventType == "tool_result" {
 			idx := -1
 			if toolCallID != "" {
-				if found, ok := toolIndexByCallID[toolCallID]; ok {
-					idx = found
+				queue := toolIndexesByCallID[toolCallID]
+				for len(queue) > 0 {
+					candidate := queue[0]
+					queue = queue[1:]
+					if candidate >= 0 && candidate < len(matchedToolIndexes) && !matchedToolIndexes[candidate] {
+						idx = candidate
+						break
+					}
+				}
+				toolIndexesByCallID[toolCallID] = queue
+				if idx < 0 {
+					// Multiple persisted result events for one call (for example an
+					// agent-facing reduced result replacing an earlier preview) update
+					// that call instead of consuming an unrelated FIFO entry.
+					if previous, ok := lastMatchedToolIndexByCallID[toolCallID]; ok {
+						idx = previous
+					}
 				}
 			}
-			if idx < 0 && unmatchedToolIdx < len(summary.ToolExecutions) {
-				idx = unmatchedToolIdx
-				unmatchedToolIdx++
+			if idx < 0 {
+				for nextUnmatchedToolIdx < len(matchedToolIndexes) && matchedToolIndexes[nextUnmatchedToolIdx] {
+					nextUnmatchedToolIdx++
+				}
+				if nextUnmatchedToolIdx < len(matchedToolIndexes) {
+					idx = nextUnmatchedToolIdx
+					nextUnmatchedToolIdx++
+				}
 			}
 			if idx >= 0 && idx < len(summary.ToolExecutions) {
+				matchedToolIndexes[idx] = true
+				if toolCallID != "" {
+					lastMatchedToolIndexByCallID[toolCallID] = idx
+				}
 				if summary.ToolExecutions[idx].ToolName == "" {
 					summary.ToolExecutions[idx].ToolName = toolName
 				}
@@ -1356,6 +1552,7 @@ func (db *DB) GetProcessDetailsSummary(messageID string) (*ProcessDetailsSummary
 					ExecutionID:     execID,
 					Status:          status,
 				})
+				matchedToolIndexes = append(matchedToolIndexes, true)
 			}
 		}
 		if execID != "" && !seenExecIDs[execID] {

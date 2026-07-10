@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"cyberstrike-ai/internal/agent"
+	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/multiagent"
 )
 
@@ -85,6 +87,11 @@ func runToolNode(ctx context.Context, args RunArgs, node graphNode, state *Workf
 		executionID = result.ExecutionID
 		isError = result.IsError
 	}
+	maxToolOutputBytes := config.MultiAgentEinoMiddlewareConfig{}.ReductionMaxLengthForTruncEffective()
+	if args.AppCfg != nil {
+		maxToolOutputBytes = args.AppCfg.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective()
+	}
+	output = truncateWorkflowToolOutput(output, maxToolOutputBytes, executionID)
 	out := toolOutputMap(node, output, toolName, toolArgs, executionID, isError)
 	if key := cfgString(node.Config, "output_key"); key != "" {
 		state.Outputs[key] = output
@@ -97,6 +104,30 @@ func runToolNode(ctx context.Context, args RunArgs, node graphNode, state *Workf
 		return out, false, "failed", errText
 	}
 	return out, true, "completed", ""
+}
+
+func truncateWorkflowToolOutput(output string, maxBytes int, executionID string) string {
+	if maxBytes <= 0 || len(output) <= maxBytes {
+		return output
+	}
+	marker := fmt.Sprintf("\n\n...[workflow tool output truncated; full result is stored in execution %s]...\n\n", strings.TrimSpace(executionID))
+	if strings.TrimSpace(executionID) == "" {
+		marker = "\n\n...[workflow tool output truncated; full result remains in the tool execution record]...\n\n"
+	}
+	budget := maxBytes - len(marker)
+	if budget <= 0 {
+		return marker
+	}
+	head := budget / 2
+	tail := budget - head
+	for head > 0 && !utf8.RuneStart(output[head]) {
+		head--
+	}
+	tailStart := len(output) - tail
+	for tailStart < len(output) && !utf8.RuneStart(output[tailStart]) {
+		tailStart++
+	}
+	return output[:head] + marker + output[tailStart:]
 }
 
 func runAgentNode(ctx context.Context, args RunArgs, node graphNode, state *WorkflowLocalState) (map[string]any, bool, string, string) {
