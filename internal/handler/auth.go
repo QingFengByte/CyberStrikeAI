@@ -170,28 +170,10 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	if session.UserID == "" || session.UserID == "admin" {
-		if err := config.PersistAuthPassword(h.configPath, newPassword); err != nil {
-			if h.logger != nil {
-				h.logger.Error("保存新密码失败", zap.Error(err))
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "保存新密码失败，请重试"})
-			return
-		}
-
-		if err := h.manager.UpdateConfig(newPassword, h.config.Auth.SessionDurationHours); err != nil {
-			if h.logger != nil {
-				h.logger.Error("更新认证配置失败", zap.Error(err))
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新认证配置失败"})
-			return
-		}
-
-		h.config.Auth.Password = newPassword
-		h.config.Auth.GeneratedPassword = ""
-		h.config.Auth.GeneratedPasswordPersisted = false
-		h.config.Auth.GeneratedPasswordPersistErr = ""
-	} else if err := h.manager.UpdateUserPassword(session.UserID, newPassword); err != nil {
+	if session.UserID == "" {
+		session.UserID = "admin"
+	}
+	if err := h.manager.UpdateUserPassword(session.UserID, newPassword); err != nil {
 		if h.logger != nil {
 			h.logger.Error("更新用户密码失败", zap.Error(err))
 		}

@@ -1362,7 +1362,7 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "初始化知识库失败: " + err.Error()})
 			return
 		}
-		h.logger.Info("知识库动态初始化完成，工具已注册")
+		h.logger.Debug("知识库动态初始化完成，工具已注册")
 	}
 
 	// 检查嵌入模型配置是否变更（需要在锁外执行，避免阻塞）
@@ -1441,10 +1441,10 @@ func (h *ConfigHandler) ApplyConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "重新加载工具配置失败: " + err.Error()})
 		return
 	}
-	h.logger.Info("已从 tools 目录重新加载工具配置", zap.Int("tools_count", len(h.config.Security.Tools)))
+	h.logger.Debug("已从 tools 目录重新加载工具配置", zap.Int("tools_count", len(h.config.Security.Tools)))
 
 	// 重新注册工具（根据新的启用状态）
-	h.logger.Info("重新注册工具")
+	h.logger.Debug("重新注册工具")
 
 	// 清空MCP服务器中的工具
 	h.mcpServer.ClearTools()
