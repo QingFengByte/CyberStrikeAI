@@ -298,6 +298,18 @@ func (m *AgentTaskManager) GetTask(conversationID string) *AgentTask {
 	return m.tasks[conversationID]
 }
 
+// GetTaskSnapshot 返回运行任务的只读副本，供状态展示使用，避免锁外读取可变任务字段。
+func (m *AgentTaskManager) GetTaskSnapshot(conversationID string) *AgentTask {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	task := m.tasks[conversationID]
+	if task == nil {
+		return nil
+	}
+	snapshot := *task
+	return &snapshot
+}
+
 // runStuckCancellingCleanup 定期将长时间处于「取消中」的任务强制结束，避免卡住无法发新消息
 func (m *AgentTaskManager) runStuckCancellingCleanup() {
 	ticker := time.NewTicker(cleanupInterval)

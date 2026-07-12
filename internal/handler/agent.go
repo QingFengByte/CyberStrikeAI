@@ -729,7 +729,7 @@ func (h *AgentHandler) runRobotMultiAgentWithRetry(
 }
 
 // ProcessMessageForRobot 供机器人（企业微信/钉钉/飞书）调用：Eino 单/多代理执行路径（含 progressCallback、过程详情），仅不发送 SSE，最后返回完整回复
-func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform string, principal authctx.Principal, conversationID, message, role string) (response string, convID string, err error) {
+func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform string, principal authctx.Principal, conversationID, message, role, agentMode string) (response string, convID string, err error) {
 	ownerUserID := strings.TrimSpace(principal.UserID)
 	if ownerUserID == "" {
 		return "", "", fmt.Errorf("authenticated robot principal is required")
@@ -814,18 +814,14 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform stri
 	}
 	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, nil)
 
-	robotMode := "eino_single"
-	if h.config != nil {
-		robotMode = config.NormalizeRobotAgentMode(h.config.MultiAgent)
-	}
+	robotMode := config.NormalizeAgentMode(agentMode)
 	switch robotMode {
 	case "eino_single":
 		return h.runRobotEinoSingleWithRetry(taskCtx, conversationID, finalMessage, agentHistoryMessages, roleTools, progressCallback, assistantMessageID, &taskStatus)
 	case "deep", "plan_execute", "supervisor":
 		if h.config == nil || !h.config.MultiAgent.Enabled {
-			h.logger.Warn("机器人配置为多代理模式但未启用 multi_agent，回退 Eino 单代理",
-				zap.String("robot_mode", robotMode))
-			return h.runRobotEinoSingleWithRetry(taskCtx, conversationID, finalMessage, agentHistoryMessages, roleTools, progressCallback, assistantMessageID, &taskStatus)
+			taskStatus = "failed"
+			return "", conversationID, fmt.Errorf("机器人对话模式 %s 需要启用 Eino 多代理", robotMode)
 		}
 		return h.runRobotMultiAgentWithRetry(taskCtx, conversationID, finalMessage, robotMode, agentHistoryMessages, roleTools, progressCallback, assistantMessageID, &taskStatus)
 	}

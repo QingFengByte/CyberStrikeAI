@@ -69,7 +69,7 @@ func (h *MonitorHandler) SetAgentHandler(ah *AgentHandler) {
 	h.agentHandler = ah
 }
 
-const monitorPageTopTools = 6
+const monitorPageTopTools = 3
 
 // MonitorStatsSummary 工具调用汇总
 type MonitorStatsSummary struct {
