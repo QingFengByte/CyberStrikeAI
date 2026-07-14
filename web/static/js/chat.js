@@ -3137,12 +3137,12 @@ function ensureMcpCallSectionChrome(messageElement, messageId) {
         mcpSection.className = 'mcp-call-section';
         const mcpLabel = document.createElement('div');
         mcpLabel.className = 'mcp-call-label';
-        mcpLabel.textContent = '📋 ' + (typeof window.t === 'function' ? window.t('chat.penetrationTestDetail') : '渗透测试详情');
+        mcpLabel.textContent = '📋 ' + (typeof window.t === 'function' ? window.t('chat.penetrationTestDetail') : '任务执行详情');
         mcpSection.appendChild(mcpLabel);
         contentWrapper.appendChild(mcpSection);
     } else {
         const mcpLabel = mcpSection.querySelector('.mcp-call-label');
-        const labelText = '📋 ' + (typeof window.t === 'function' ? window.t('chat.penetrationTestDetail') : '渗透测试详情');
+        const labelText = '📋 ' + (typeof window.t === 'function' ? window.t('chat.penetrationTestDetail') : '任务执行详情');
         if (mcpLabel && mcpLabel.textContent !== labelText) {
             mcpLabel.textContent = labelText;
         }

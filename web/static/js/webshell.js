@@ -2003,7 +2003,7 @@ function renderWebshellProcessDetailsBlock(processDetails, defaultCollapsed) {
     }
     var expandLabel = (typeof window.t === 'function') ? window.t('chat.expandDetail') : '展开详情';
     var collapseLabel = (typeof window.t === 'function') ? window.t('tasks.collapseDetail') : '收起详情';
-    var headerLabel = (typeof window.t === 'function') ? (window.t('chat.penetrationTestDetail') || '执行过程及调用工具') : '执行过程及调用工具';
+    var headerLabel = (typeof window.t === 'function') ? (window.t('chat.penetrationTestDetail') || '任务执行详情') : '任务执行详情';
     var wrapper = document.createElement('div');
     wrapper.className = 'process-details-container webshell-ai-process-block';
     var collapsed = defaultCollapsed !== false;
@@ -3533,7 +3533,7 @@ function runWebshellAiSend(conn, inputEl, sendBtn, messagesContainer) {
         }
         // 生成结果后：将执行过程折叠并保留，供后续查看；统一放在「助手回复下方」（与刷新后加载历史一致，最佳实践）
         if (timelineContainer && timelineContainer.classList.contains('has-items') && !timelineContainer.closest('.webshell-ai-process-block')) {
-            var headerLabel = (typeof window.t === 'function') ? (window.t('chat.penetrationTestDetail') || '执行过程及调用工具') : '执行过程及调用工具';
+            var headerLabel = (typeof window.t === 'function') ? (window.t('chat.penetrationTestDetail') || '任务执行详情') : '任务执行详情';
             var wrap = document.createElement('div');
             wrap.className = 'process-details-container webshell-ai-process-block';
             wrap.innerHTML = '<button type="button" class="webshell-ai-process-toggle" aria-expanded="false">' + escapeHtml(headerLabel) + ' <span class="ws-toggle-icon">▶</span></button><div class="process-details-content"></div>';

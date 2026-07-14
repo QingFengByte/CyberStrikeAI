@@ -557,7 +557,7 @@
     "searchInGroup": "搜索分组中的对话...",
     "loadingTools": "正在加载工具...",
     "noMatchTools": "没有匹配的工具",
-    "penetrationTestDetail": "渗透测试详情",
+    "penetrationTestDetail": "任务执行详情",
     "expandDetail": "展开详情",
     "expandDetailLazyHint": "展开详情（点击后加载迭代详情）",
     "viewToolDetail": "查看详情",

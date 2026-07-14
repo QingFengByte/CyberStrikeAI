@@ -21029,7 +21029,7 @@ tr.mcp-stats-tool-row[data-tool-name]:focus-visible {
     margin-bottom: 8px;
 }
 .webshell-ai-process-block.process-details-container {
-    /* 让“渗透测试详情”视觉上跟随助手气泡宽度，而不是强行 100% 宽 */
+    /* 让“任务执行详情”视觉上跟随助手气泡宽度，而不是强行 100% 宽 */
     width: auto;
     max-width: 80%;
     align-self: flex-start;
@@ -33492,10 +33492,11 @@ html[data-theme="dark"] .timeline-item-tool_call.tool-call-failed:hover {
 html[data-theme="dark"] .timeline-item-tool_call .tool-args,
 html[data-theme="dark"] .timeline-item-tool_call .tool-result,
 html[data-theme="dark"] .timeline-item-tool_result .tool-result {
-    background: rgba(51, 65, 85, 0.52);
-    border-color: rgba(148, 163, 184, 0.28);
+    /* 工具参数与结果沿用外层卡片底色，不再额外铺一层色块。 */
+    background: transparent !important;
+    border-color: rgba(148, 163, 184, 0.2) !important;
     color: #dbe4f0;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 html[data-theme="dark"] .timeline-item-tool_call:has(.tool-result-section.success) .tool-args,

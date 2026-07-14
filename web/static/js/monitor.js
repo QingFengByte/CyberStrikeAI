@@ -1379,7 +1379,7 @@ const PROCESS_DETAILS_PAGE_SIZE = 50;
 function getProcessDetailsLoadMoreLabel(hasMore) {
     if (!hasMore) return '';
     return (typeof window.t === 'function' ? window.t('common.loadMore') : '加载更多') + ' · ' +
-        (typeof window.t === 'function' ? window.t('chat.penetrationTestDetail') : '过程详情');
+        (typeof window.t === 'function' ? window.t('chat.penetrationTestDetail') : '任务执行详情');
 }
 
 function updateProcessDetailsLoadMoreButton(assistantMessageId, backendMessageId, hasMore) {
@@ -6535,7 +6535,7 @@ function refreshProgressAndTimelineI18n() {
             titleEl.textContent = '\uD83D\uDD0D ' + translateProgressMessage(raw, pdata);
         }
     });
-    // 转换后的详情区顶栏「渗透测试详情」：仅刷新不在 .progress-message 内的 progress 标题
+    // 转换后的详情区顶栏「任务执行详情」：仅刷新不在 .progress-message 内的 progress 标题
     document.querySelectorAll('.progress-container .progress-header .progress-title').forEach(function (titleEl) {
         if (titleEl.closest('.progress-message')) return;
         titleEl.textContent = '\uD83D\uDCCB ' + _t('chat.penetrationTestDetail');

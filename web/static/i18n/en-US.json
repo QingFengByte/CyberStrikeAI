@@ -569,7 +569,7 @@
     "searchInGroup": "Search in group...",
     "loadingTools": "Loading tools...",
     "noMatchTools": "No matching tools",
-    "penetrationTestDetail": "Penetration test details",
+    "penetrationTestDetail": "Task execution details",
     "expandDetail": "Expand details",
     "expandDetailLazyHint": "Expand details (loads iteration details on click)",
     "viewToolDetail": "View details",
