@@ -12,6 +12,18 @@ test('图编排提供导入、导出和覆盖确认容器', () => {
     assert.equal(zh.workflows.package.importLocal, '导入本地包');
 });
 
+test('本地包上传支持拖拽、键盘选择和选中文件反馈', () => {
+    const html = fs.readFileSync('web/templates/index.html', 'utf8');
+    const workflows = fs.readFileSync('web/static/js/workflows.js', 'utf8');
+    const css = fs.readFileSync('web/static/css/style.css', 'utf8');
+    assert.match(html, /id="workflow-package-dropzone"[\s\S]*?ondrop="onWorkflowPackageDrop\(event\)"/);
+    assert.match(html, /onkeydown="onWorkflowPackageDropzoneKeydown\(event\)"/);
+    assert.match(html, /id="workflow-package-selected-file"/);
+    assert.match(workflows, /window\.onWorkflowPackageDrop = function \(event\)/);
+    assert.match(workflows, /endsWith\('\.csapkg\.zip'\)/);
+    assert.match(css, /\.workflow-package-dropzone\.is-dragging/);
+});
+
 test('工作流脚本调用包契约的全部端点与冲突错误码', () => {
     const workflows = fs.readFileSync('web/static/js/workflows.js', 'utf8');
     const client = fs.readFileSync('web/static/js/workflow-package-client.js', 'utf8');
