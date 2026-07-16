@@ -158,6 +158,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 
 	// 注册漏洞记录工具
 	registerVulnerabilityTools(mcpServer, db, log.Logger)
+	registerAssetTools(mcpServer, db, log.Logger)
 	registerProjectFactTools(mcpServer, db, cfg, log.Logger)
 	registerVisionTools(mcpServer, cfg, log.Logger)
 
@@ -380,6 +381,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	authHandler.SetAudit(auditSvc)
 	attackChainHandler := handler.NewAttackChainHandler(db, &cfg.OpenAI, log.Logger)
 	vulnerabilityHandler := handler.NewVulnerabilityHandler(db, log.Logger)
+	assetHandler := handler.NewAssetHandler(db, log.Logger)
 	projectHandler := handler.NewProjectHandler(db, log.Logger)
 	rbacHandler := handler.NewRBACHandler(db, log.Logger)
 	rbacHandler.SetAudit(auditSvc)
@@ -465,6 +467,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// 设置漏洞工具注册器（内置工具，必须设置）
 	vulnerabilityRegistrar := func() error {
 		registerVulnerabilityTools(mcpServer, db, log.Logger)
+		registerAssetTools(mcpServer, db, log.Logger)
 		registerProjectFactTools(mcpServer, db, cfg, log.Logger)
 		registerVisionTools(mcpServer, cfg, log.Logger)
 		return nil
@@ -554,6 +557,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		attackChainHandler,
 		app, // 传递 App 实例以便动态获取 knowledgeHandler
 		vulnerabilityHandler,
+		assetHandler,
 		projectHandler,
 		workflowHandler,
 		webshellHandler,
@@ -856,6 +860,7 @@ func setupRoutes(
 	attackChainHandler *handler.AttackChainHandler,
 	app *App, // 传递 App 实例以便动态获取 knowledgeHandler
 	vulnerabilityHandler *handler.VulnerabilityHandler,
+	assetHandler *handler.AssetHandler,
 	projectHandler *handler.ProjectHandler,
 	workflowHandler *handler.WorkflowHandler,
 	webshellHandler *handler.WebShellHandler,
@@ -975,6 +980,15 @@ func setupRoutes(
 		protected.POST("/fofa/search", fofaHandler.Search)
 		// 信息收集 - 自然语言解析为 FOFA 语法（需人工确认后再查询）
 		protected.POST("/fofa/parse", fofaHandler.ParseNaturalLanguage)
+
+		// 资产管理
+		protected.GET("/assets", assetHandler.List)
+		protected.GET("/assets/stats", assetHandler.Stats)
+		protected.POST("/assets/import", assetHandler.Import)
+		protected.POST("/assets/scan-links", assetHandler.RecordScans)
+		protected.PUT("/assets/project-binding", assetHandler.UpdateProjectBinding)
+		protected.PUT("/assets/:id", assetHandler.Update)
+		protected.DELETE("/assets/:id", assetHandler.Delete)
 
 		// 批量任务管理
 		protected.POST("/batch-tasks", agentHandler.CreateBatchQueue)

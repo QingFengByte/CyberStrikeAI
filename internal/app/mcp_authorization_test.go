@@ -72,6 +72,45 @@ func TestEveryBuiltinMCPToolHasExplicitAuthorizationPolicy(t *testing.T) {
 	}
 }
 
+func TestMCPAssetToolAuthorizationUsesAssetPermissionsAndScope(t *testing.T) {
+	db, err := database.NewDB(filepath.Join(t.TempDir(), "mcp-asset-authz.db"), zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user, err := db.CreateRBACUser("asset-user", "Asset User", "hash", true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owned := &database.Asset{IP: "192.0.2.10", Port: 443, Protocol: "https"}
+	hidden := &database.Asset{IP: "192.0.2.20", Port: 443, Protocol: "https"}
+	if _, err := db.UpsertAssets([]*database.Asset{owned}, user.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertAssets([]*database.Asset{hidden}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	permissions := map[string]bool{"asset:read": true, "asset:write": true}
+	ctx := authctx.WithPrincipal(context.Background(), authctx.NewPrincipal(user.ID, user.Username, database.RBACScopeAssigned, permissions))
+	authorize := mcpToolAuthorizer(db)
+	if err := authorize(ctx, builtin.ToolQueryAssets, nil); err != nil {
+		t.Fatalf("asset query denied: %v", err)
+	}
+	if err := authorize(ctx, builtin.ToolGetAsset, map[string]interface{}{"id": owned.ID}); err != nil {
+		t.Fatalf("owned asset denied: %v", err)
+	}
+	if err := authorize(ctx, builtin.ToolGetAsset, map[string]interface{}{"id": hidden.ID}); err == nil {
+		t.Fatal("unassigned asset was readable")
+	}
+	if err := authorize(ctx, builtin.ToolUpdateAsset, map[string]interface{}{"id": owned.ID}); err != nil {
+		t.Fatalf("owned asset update denied: %v", err)
+	}
+	if err := authorize(ctx, builtin.ToolDeleteAsset, map[string]interface{}{"id": owned.ID}); err == nil {
+		t.Fatal("asset delete without asset:delete was allowed")
+	}
+}
+
 func TestExternalMCPRequiresDedicatedPermission(t *testing.T) {
 	authorize := externalMCPToolAuthorizer()
 	ctx := authctx.WithPrincipal(context.Background(), authctx.NewPrincipal("u1", "user", database.RBACScopeAssigned, map[string]bool{"agent:execute": true}))

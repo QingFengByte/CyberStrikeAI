@@ -268,6 +268,9 @@ func (db *DB) DeleteProject(id string) error {
 	if _, err := db.Exec(`UPDATE vulnerabilities SET project_id = NULL WHERE project_id = ?`, id); err != nil {
 		return fmt.Errorf("解除漏洞项目关联失败: %w", err)
 	}
+	if _, err := db.Exec(`UPDATE assets SET project_id = NULL WHERE project_id = ?`, id); err != nil {
+		return fmt.Errorf("解除资产项目关联失败: %w", err)
+	}
 	_, err := db.Exec(`DELETE FROM projects WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("删除项目失败: %w", err)

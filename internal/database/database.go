@@ -405,6 +405,19 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
 	);`
 
+	createAssetsTable := `
+	CREATE TABLE IF NOT EXISTS assets (
+		id TEXT PRIMARY KEY,
+		dedup_key TEXT NOT NULL UNIQUE, project_id TEXT,
+		host TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 0,
+		domain TEXT NOT NULL DEFAULT '', protocol TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
+		server TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '', province TEXT NOT NULL DEFAULT '', city TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT 'manual', source_query TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+		tags_json TEXT NOT NULL DEFAULT '[]', first_seen_at DATETIME NOT NULL, last_seen_at DATETIME NOT NULL,
+		created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, owner_user_id TEXT,
+		FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+	);`
+
 	createVulnerabilityAlertSubscriptionsTable := `
 	CREATE TABLE IF NOT EXISTS vulnerability_alert_subscriptions (
 		user_id TEXT PRIMARY KEY,
@@ -715,6 +728,13 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity ON vulnerabilities(severity);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_status ON vulnerabilities(status);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_created_at ON vulnerabilities(created_at);
+	CREATE INDEX IF NOT EXISTS idx_assets_last_seen ON assets(last_seen_at);
+	CREATE INDEX IF NOT EXISTS idx_assets_last_scan ON assets(last_scan_at);
+	CREATE INDEX IF NOT EXISTS idx_assets_ip ON assets(ip);
+	CREATE INDEX IF NOT EXISTS idx_assets_domain ON assets(domain);
+	CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+	CREATE INDEX IF NOT EXISTS idx_assets_owner ON assets(owner_user_id);
+	CREATE INDEX IF NOT EXISTS idx_assets_project ON assets(project_id);
 	CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 	CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_project_facts_project_id ON project_facts(project_id);
@@ -822,6 +842,12 @@ func (db *DB) initTables() error {
 
 	if _, err := db.Exec(createVulnerabilitiesTable); err != nil {
 		return fmt.Errorf("创建vulnerabilities表失败: %w", err)
+	}
+	if _, err := db.Exec(createAssetsTable); err != nil {
+		return fmt.Errorf("创建assets表失败: %w", err)
+	}
+	if err := db.migrateAssetsTable(); err != nil {
+		return fmt.Errorf("迁移assets表失败: %w", err)
 	}
 
 	if _, err := db.Exec(createBatchTaskQueuesTable); err != nil {
@@ -946,6 +972,32 @@ func (db *DB) migrateRobotUserSessionsTable() error {
 	if count == 0 {
 		_, err := db.Exec("ALTER TABLE robot_user_sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'eino_single'")
 		return err
+	}
+	return nil
+}
+
+// migrateAssetsTable keeps databases created by the first asset-management release compatible.
+func (db *DB) migrateAssetsTable() error {
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"project_id", "ALTER TABLE assets ADD COLUMN project_id TEXT"},
+		{"last_scan_at", "ALTER TABLE assets ADD COLUMN last_scan_at DATETIME"},
+		{"last_scan_conversation_id", "ALTER TABLE assets ADD COLUMN last_scan_conversation_id TEXT NOT NULL DEFAULT ''"},
+		{"last_scan_queue_id", "ALTER TABLE assets ADD COLUMN last_scan_queue_id TEXT NOT NULL DEFAULT ''"},
+		{"last_scan_task_id", "ALTER TABLE assets ADD COLUMN last_scan_task_id TEXT NOT NULL DEFAULT ''"},
+	}
+	for _, column := range columns {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('assets') WHERE name=?", column.name).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err := db.Exec(column.ddl); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

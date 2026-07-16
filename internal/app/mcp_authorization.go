@@ -71,6 +71,35 @@ func mcpToolAuthorizer(db *database.DB) func(context.Context, string, map[string
 			return nil
 		case builtin.ToolGetVulnerability:
 			return resource("vulnerability:read", "vulnerability", "id")
+		case builtin.ToolQueryAssets:
+			return require("asset:read")
+		case builtin.ToolGetAsset:
+			return resource("asset:read", "asset", "id")
+		case builtin.ToolCreateAsset:
+			if err := require("asset:write"); err != nil {
+				return err
+			}
+			if projectID := mcpAuthorizationString(args, "project_id"); projectID != "" && (db == nil || !db.UserCanAccessResource(principal.UserID, principal.ScopeFor("asset:write"), "project", projectID)) {
+				return fmt.Errorf("no access to project %s", projectID)
+			}
+			return nil
+		case builtin.ToolUpdateAsset, builtin.ToolCompleteAssetScan:
+			if err := resource("asset:write", "asset", "id"); err != nil {
+				return err
+			}
+			if toolName == builtin.ToolCompleteAssetScan {
+				conversationID := mcpAuthorizationConversationID(ctx)
+				if conversationID == "" || db == nil || !db.UserCanAccessResource(principal.UserID, principal.ScopeFor("asset:write"), "conversation", conversationID) {
+					return fmt.Errorf("no access to conversation %s", conversationID)
+				}
+				return nil
+			}
+			if projectID := mcpAuthorizationString(args, "project_id"); projectID != "" && (db == nil || !db.UserCanAccessResource(principal.UserID, principal.ScopeFor("asset:write"), "project", projectID)) {
+				return fmt.Errorf("no access to project %s", projectID)
+			}
+			return nil
+		case builtin.ToolDeleteAsset:
+			return resource("asset:delete", "asset", "id")
 		case builtin.ToolUpsertProjectFact, builtin.ToolDeprecateProjectFact, builtin.ToolRestoreProjectFact:
 			return authorizeProjectTool(ctx, principal, db, "project:write")
 		case builtin.ToolGetProjectFact, builtin.ToolListProjectFacts, builtin.ToolSearchProjectFacts:
